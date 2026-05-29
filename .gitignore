@@ -1,0 +1,28 @@
+# Local browser profiles created during manual/headless verification
+.edge-profile/
+.edge-profile-*/
+
+# Editor and local history folders
+.history/
+.vscode/
+.idea/
+
+# Local notes for development handoff/data checking
+HANDOFF.md
+数值.md
+
+# Runtime logs
+*.log
+server.out.log
+server.err.log
+
+# Verification screenshots and temporary previews
+axis-*.png
+
+# Source/reference webpages are not needed by the deployed app.
+# Required images have been copied into assets/.
+参考网页/
+
+# OS metadata
+.DS_Store
+Thumbs.db
