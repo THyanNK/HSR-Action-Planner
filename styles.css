@@ -38,6 +38,10 @@ body {
   letter-spacing: 0;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -191,6 +195,19 @@ h1 {
   color: var(--muted);
   margin-top: 6px;
   font-size: 14px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tutorial-button {
+  min-height: 44px;
+  padding-inline: 16px;
 }
 
 .limit-control {
@@ -1247,6 +1264,189 @@ select:focus {
   color: var(--primary-2);
 }
 
+.tutorial-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 9, 15, 0.72);
+}
+
+.tutorial-modal[hidden] {
+  display: none;
+}
+
+.tutorial-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(21, 26, 36, 0.98);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+}
+
+.tutorial-contact-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 36px;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(16, 21, 32, 0.96);
+}
+
+.tutorial-contact-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.tutorial-contact-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tutorial-contact-copy strong {
+  color: var(--gold);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.tutorial-qr-button {
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: zoom-in;
+}
+
+.tutorial-qr-button:hover,
+.tutorial-qr-button:focus-visible {
+  border-color: var(--primary);
+}
+
+.tutorial-qr {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.tutorial-close {
+  width: 36px;
+  height: 36px;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.tutorial-close:hover {
+  color: var(--text);
+  border-color: var(--primary);
+}
+
+.tutorial-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.tutorial-title-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tutorial-title-row h2 {
+  font-size: 20px;
+}
+
+.tutorial-title-row p,
+.tutorial-section p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.tutorial-section {
+  display: grid;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.tutorial-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.tutorial-qr-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 9, 15, 0.82);
+}
+
+.tutorial-qr-zoom[hidden] {
+  display: none;
+}
+
+.tutorial-qr-zoom img {
+  width: min(520px, 82vw);
+  max-height: 82vh;
+  object-fit: contain;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.tutorial-qr-zoom-close {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.tutorial-qr-zoom-close:hover {
+  color: var(--text);
+  border-color: var(--primary);
+}
+
 @media (max-width: 1320px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1330,6 +1530,16 @@ select:focus {
     flex-direction: column;
   }
 
+  .topbar-actions {
+    align-items: stretch;
+    justify-content: stretch;
+    flex-direction: column;
+  }
+
+  .tutorial-button {
+    width: 100%;
+  }
+
   .limit-control {
     width: 100%;
     grid-template-columns: repeat(3, 1fr);
@@ -1369,5 +1579,42 @@ select:focus {
 @media (max-width: 480px) {
   .roster-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tutorial-modal {
+    padding: 10px;
+  }
+
+  .tutorial-dialog {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+  }
+
+  .tutorial-contact-bar {
+    grid-template-columns: minmax(0, 1fr) 72px 34px;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .tutorial-contact-copy strong {
+    font-size: 19px;
+  }
+
+  .tutorial-qr-button {
+    width: 72px;
+    height: 72px;
+  }
+
+  .tutorial-qr-zoom {
+    padding: 14px;
+  }
+
+  .tutorial-qr-zoom-close {
+    top: 14px;
+    right: 14px;
+  }
+
+  .tutorial-body {
+    padding: 14px;
   }
 }

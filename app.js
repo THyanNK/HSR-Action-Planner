@@ -9,6 +9,7 @@ const presetsKey = "hsr-axis-planner-presets-v2";
 const legacyPresetsKey = "hsr-axis-planner-presets-v1";
 const layoutKey = "hsr-axis-layout-v1";
 const sidebarKey = "hsr-axis-sidebar-collapsed-v1";
+const tutorialSeenKey = "hsr-axis-tutorial-seen-v1";
 const exportType = "hsr-axis-planner-config";
 const exportVersion = 2;
 const shareHashPrefix = "share=";
@@ -29,6 +30,7 @@ const legacyCharacterMap = {
 const state = loadState();
 let activePresetId = "";
 let currentDragPayload = null;
+let tutorialReturnFocus = null;
 
 function getDefaultState() {
   return {
@@ -1432,6 +1434,89 @@ function initSidebarToggle() {
   expandButton.addEventListener("click", () => setCollapsed(false));
 }
 
+function hasSeenTutorial() {
+  try {
+    return localStorage.getItem(tutorialSeenKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markTutorialSeen() {
+  try {
+    localStorage.setItem(tutorialSeenKey, "1");
+  } catch {
+    // Ignore storage failures so the tutorial can still be closed.
+  }
+}
+
+function initTutorialModal() {
+  const openButton = document.querySelector("#openTutorial");
+  const modal = document.querySelector("#tutorialModal");
+  if (!openButton || !modal) return;
+
+  const closeButtons = modal.querySelectorAll("[data-tutorial-close]");
+  const qrButton = modal.querySelector("#tutorialQrButton");
+  const qrZoom = modal.querySelector("#tutorialQrZoom");
+  const qrZoomClose = modal.querySelector("[data-tutorial-qr-close]");
+
+  const closeQrZoom = () => {
+    if (!qrZoom || qrZoom.hidden) return;
+    qrZoom.hidden = true;
+    qrButton?.setAttribute("aria-expanded", "false");
+    qrButton?.focus({ preventScroll: true });
+  };
+
+  const openQrZoom = () => {
+    if (!qrZoom) return;
+    qrZoom.hidden = false;
+    qrButton?.setAttribute("aria-expanded", "true");
+    qrZoomClose?.focus({ preventScroll: true });
+  };
+
+  const openTutorial = () => {
+    tutorialReturnFocus = document.activeElement && typeof document.activeElement.focus === "function" ? document.activeElement : null;
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    const closeButton = modal.querySelector("[data-tutorial-close]");
+    closeButton?.focus({ preventScroll: true });
+  };
+
+  const closeTutorial = () => {
+    if (modal.hidden) return;
+    closeQrZoom();
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+    markTutorialSeen();
+    if (tutorialReturnFocus && document.contains(tutorialReturnFocus)) {
+      tutorialReturnFocus.focus({ preventScroll: true });
+    }
+  };
+
+  openButton.addEventListener("click", openTutorial);
+  qrButton?.addEventListener("click", openQrZoom);
+  qrZoom?.addEventListener("click", (event) => {
+    if (event.target === qrZoom) closeQrZoom();
+  });
+  qrZoomClose?.addEventListener("click", closeQrZoom);
+  closeButtons.forEach((button) => button.addEventListener("click", closeTutorial));
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closeTutorial();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || modal.hidden) return;
+    if (qrZoom && !qrZoom.hidden) {
+      closeQrZoom();
+      return;
+    }
+    closeTutorial();
+  });
+
+  if (!hasSeenTutorial()) openTutorial();
+}
+
 function updateLimitButtons() {
   document.querySelectorAll("[data-limit]").forEach((button) => {
     button.classList.toggle("active", Number(button.dataset.limit) === state.limit);
@@ -1842,5 +1927,4 @@ applySharedConfigFromUrl();
 renderAll();
 initWorkspaceResizer();
 initSidebarToggle();
-
-
+initTutorialModal();
