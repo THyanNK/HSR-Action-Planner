@@ -20,6 +20,7 @@ const legacyCharacterMap = {
 
 const state = loadState();
 let activePresetId = "";
+let currentDragPayload = null;
 
 function getDefaultState() {
   return {
@@ -1508,15 +1509,18 @@ document.addEventListener("dragstart", (event) => {
       : null;
 
   if (!payload) return;
-  event.dataTransfer.effectAllowed = payload.kind === "slot" || payload.kind === "dance-existing" ? "move" : "copy";
-  event.dataTransfer.setData("application/json", JSON.stringify(payload));
+  currentDragPayload = payload;
+  const serialized = JSON.stringify(payload);
+  event.dataTransfer.effectAllowed = payload.kind === "effect-new" ? "copyMove" : "move";
+  event.dataTransfer.setData("application/json", serialized);
+  event.dataTransfer.setData("text/plain", serialized);
 });
 
 document.addEventListener("dragover", (event) => {
   const target = event.target.closest("[data-slot-row], [data-drop-index], #timeline");
   if (!target) return;
   event.preventDefault();
-  event.dataTransfer.dropEffect = "move";
+  event.dataTransfer.dropEffect = currentDragPayload?.kind === "effect-new" ? "copy" : "move";
   const row = event.target.closest("[data-slot-row], [data-drop-index]");
   if (row) row.classList.add("drop-target");
 });
@@ -1534,9 +1538,9 @@ document.addEventListener("drop", (event) => {
 
   let payload = null;
   try {
-    payload = JSON.parse(event.dataTransfer.getData("application/json") || "null");
+    payload = JSON.parse(event.dataTransfer.getData("application/json") || event.dataTransfer.getData("text/plain") || "null");
   } catch {
-    payload = null;
+    payload = currentDragPayload;
   }
   if (!payload) return;
 
@@ -1583,6 +1587,7 @@ document.addEventListener("drop", (event) => {
 });
 
 document.addEventListener("dragend", () => {
+  currentDragPayload = null;
   document.querySelectorAll(".drop-target").forEach((row) => row.classList.remove("drop-target"));
 });
 
