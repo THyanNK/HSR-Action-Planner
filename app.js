@@ -1,4 +1,4 @@
-﻿const assetBase = "./assets/hsr-tool";
+const assetBase = "./assets/other";
 const characters = Array.isArray(window.HSR_CHARACTERS) ? window.HSR_CHARACTERS : [];
 const characterById = new Map(characters.map((character) => [character.id, character]));
 const coeffs = [0.2, 0.1, 0.05, 0.02];
@@ -11,11 +11,16 @@ const layoutKey = "hsr-axis-layout-v1";
 const sidebarKey = "hsr-axis-sidebar-collapsed-v1";
 
 const legacyCharacterMap = {
-  sparkle: "special-huohua",
-  yaoguang: "special-yaoguang",
-  silver999: "special-silver999",
-  feiying: "special-feiying",
-  trailblazer: "special-trailblazer-elation",
+  sparkle: "char-1502",
+  yaoguang: "char-1501",
+  silver999: "char-1504",
+  feiying: "char-1505",
+  trailblazer: "char-8009",
+  "special-yaoguang": "char-1501",
+  "special-huohua": "char-1502",
+  "special-silver999": "char-1504",
+  "special-feiying": "char-1505",
+  "special-trailblazer-elation": "char-8009",
 };
 
 const state = loadState();
@@ -25,9 +30,9 @@ let currentDragPayload = null;
 function getDefaultState() {
   return {
     slots: [
-      createSlot("slot-1", "special-feiying"),
-      createSlot("slot-2", "special-trailblazer-elation"),
-      createSlot("slot-3", "special-huohua"),
+      createSlot("slot-1", "char-1505"),
+      createSlot("slot-2", "char-8009"),
+      createSlot("slot-3", "char-1502"),
       createSlot("slot-4", "char-1403"),
     ],
     enemySets: {
@@ -326,7 +331,7 @@ function ensureEnemySets(targetState = state) {
 }
 
 function getCharacter(id) {
-  return characterById.get(id) || null;
+  return characterById.get(legacyCharacterMap[id] || id) || null;
 }
 
 function getSlotById(id) {
@@ -769,7 +774,7 @@ function makeActors({ phase, startAt, useVonwacq }) {
       id: "aha",
       type: "aha",
       name: "阿哈时刻",
-      icon: `${assetBase}/IconHead_202002.png`,
+      icon: `${assetBase}/aha.png`,
       speed: aha.speed,
       period,
       nextAt: startAt + period,

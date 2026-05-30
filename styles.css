@@ -163,7 +163,7 @@ button {
 
 .main {
   min-width: 0;
-  padding: 26px;
+  padding: 26px 144px 26px 26px;
   overflow-x: hidden;
 }
 
@@ -223,7 +223,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(520px, 1fr) 8px minmax(500px, 0.9fr);
   gap: 12px;
-  max-width: 1540px;
+  max-width: none;
   margin: 0 auto;
   align-items: start;
 }
@@ -257,8 +257,7 @@ h1 {
 
 .axis-workbench {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 118px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
@@ -772,15 +771,18 @@ select:focus {
 }
 
 .plugin-palette {
-  position: sticky;
-  top: 26px;
-  width: 100%;
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  z-index: 20;
+  width: 118px;
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: rgba(21, 26, 36, 0.9);
   box-shadow: var(--shadow);
+  transform: translateY(-50%);
 }
 
 .plugin-palette-head {
