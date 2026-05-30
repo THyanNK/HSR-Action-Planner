@@ -8,6 +8,7 @@ const legacyStateKey = "hsr-axis-planner-v1";
 const presetsKey = "hsr-axis-planner-presets-v2";
 const legacyPresetsKey = "hsr-axis-planner-presets-v1";
 const layoutKey = "hsr-axis-layout-v1";
+const sidebarKey = "hsr-axis-sidebar-collapsed-v1";
 
 const legacyCharacterMap = {
   sparkle: "special-huohua",
@@ -18,6 +19,7 @@ const legacyCharacterMap = {
 };
 
 const state = loadState();
+let activePresetId = "";
 
 function getDefaultState() {
   return {
@@ -33,6 +35,7 @@ function getDefaultState() {
     },
     activeEnemyPhase: 1,
     supports: [],
+    actionAdjustments: [],
     pullOverrides: {},
     transition: {
       enabled: false,
@@ -107,6 +110,7 @@ function normalizeState(source) {
   next.enemySets.phase2 = Array.isArray(next.enemySets.phase2) ? next.enemySets.phase2 : clone(base.enemySets.phase2);
   next.activeEnemyPhase = Math.max(1, Math.floor(numberOr(source?.activeEnemyPhase, 1)));
   next.supports = Array.isArray(source?.supports) ? source.supports : [];
+  next.actionAdjustments = Array.isArray(source?.actionAdjustments) ? source.actionAdjustments : [];
   next.pullOverrides = source?.pullOverrides && typeof source.pullOverrides === "object" ? source.pullOverrides : {};
   next.limit = [150, 300, 600].includes(Number(source?.limit)) ? Number(source.limit) : 300;
   next.showAha = source?.showAha !== false;
@@ -117,6 +121,14 @@ function normalizeState(source) {
     afterEvent: Math.max(0, Math.floor(numberOr(support.afterEvent, 0))),
     percent: normalizeSupportPercent(support.percent),
   }));
+  next.actionAdjustments = next.actionAdjustments
+    .map((adjustment) => ({
+      id: adjustment.id || makeId("effect"),
+      type: adjustment.type === "push" ? "push" : "pull",
+      targetKey: String(adjustment.targetKey || ""),
+      percent: normalizeEffectPercent(adjustment.percent),
+    }))
+    .filter((adjustment) => adjustment.targetKey);
 
   ensureEnemySets(next);
   ensureAllPullTargets(next);
@@ -263,6 +275,11 @@ function normalizePullPercent(value) {
 
 function normalizeSupportPercent(value) {
   const parsed = numberOr(value, 24);
+  return Math.min(100, Math.max(0, parsed));
+}
+
+function normalizeEffectPercent(value) {
+  const parsed = numberOr(value, 0);
   return Math.min(100, Math.max(0, parsed));
 }
 
@@ -474,6 +491,18 @@ function getPullSettings(sourceSlotId, phase, naturalIndex) {
   };
 }
 
+function actorEventKey(actor, phase) {
+  return `${phase}:${actor.type}:${actor.id}:${actor.cycle}`;
+}
+
+function getActionAdjustments(targetKey) {
+  return (state.actionAdjustments || []).filter((adjustment) => adjustment.targetKey === targetKey);
+}
+
+function getEffectLabel(type) {
+  return type === "push" ? "推条" : "拉条";
+}
+
 function renderCharacterOptions() {
   const list = document.querySelector("#characterOptions");
   if (!list) return;
@@ -514,13 +543,12 @@ function renderAllies() {
       const avatar = ally?.icon
         ? `<img class="avatar" src="${ally.icon}" alt="" />`
         : `<span class="avatar-fallback">${escapeHtml((ally?.name || String(index + 1)).slice(-1))}</span>`;
-      const meta = character ? getCharacterLabel(character) : ally ? "自定义角色" : "未上场";
       const nameValue = character?.name || slot.customName || "";
       const finalSpeed = ally ? formatNumber(ally.speed, 1) : "-";
       const rowClass = ally ? "" : "empty-slot";
 
       return `
-        <div class="table-row ${rowClass}" data-slot-row="${slot.id}">
+        <div class="table-row ${rowClass}" draggable="true" data-drag-slot-id="${slot.id}" data-slot-row="${slot.id}">
           <span class="slot">${index + 1}</span>
           <div class="unit-main character-picker">
             ${avatar}
@@ -548,10 +576,6 @@ function renderAllies() {
                   </select>`
                 : ""
             }
-          </div>
-          <div class="row-actions">
-            <button class="icon-button" type="button" title="上移" data-move-id="${slot.id}" data-dir="-1" ${index === 0 ? "disabled" : ""}>↑</button>
-            <button class="icon-button" type="button" title="下移" data-move-id="${slot.id}" data-dir="1" ${index === state.slots.length - 1 ? "disabled" : ""}>↓</button>
           </div>
         </div>
       `;
@@ -643,6 +667,7 @@ function renderTransition() {
 
 function renderSupports() {
   const wrap = document.querySelector("#supportControls");
+  if (!wrap) return;
   if (!state.supports.length) {
     wrap.innerHTML = `<div class="empty-state">暂无拉条插件</div>`;
     return;
@@ -680,8 +705,9 @@ function computeAha() {
 
 function renderAha() {
   const aha = computeAha();
+  const panel = document.querySelector(".aha-panel");
+  if (panel) panel.hidden = aha.parts.length === 0;
   document.querySelector("#ahaSpeed").textContent = formatNumber(aha.speed, 1);
-  document.querySelector("#showAha").checked = state.showAha;
   document.querySelector("#ahaDetail").innerHTML = aha.parts.length
     ? aha.parts
         .map(
@@ -735,7 +761,7 @@ function makeActors({ phase, startAt, useVonwacq }) {
   const actors = [...allies, ...enemies];
   const aha = computeAha();
 
-  if (state.showAha && aha.speed > 0) {
+  if (aha.parts.length && aha.speed > 0) {
     const period = 10000 / aha.speed;
     actors.push({
       uid: "aha",
@@ -782,6 +808,7 @@ function getTransitionConfig() {
 function buildTimeline() {
   const timeline = [];
   const appliedSupportIds = new Set();
+  const appliedActionAdjustmentIds = new Set();
   const limit = state.limit;
   const transition = getTransitionConfig();
   const transitionPoints = transition.enabled ? transition.points : [];
@@ -794,6 +821,19 @@ function buildTimeline() {
 
   const phaseAv = (absoluteAv) => Math.max(0, absoluteAv - phaseStartAt);
   const pendingTransition = () => transitionPoints[transitionIndex] || null;
+  const applyActionAdjustments = () => {
+    for (const actor of actors) {
+      if (actor.type !== "ally" && actor.type !== "enemy") continue;
+      const key = actorEventKey(actor, phase);
+      const matches = getActionAdjustments(key).sort((a, b) => a.id.localeCompare(b.id));
+      for (const adjustment of matches) {
+        if (appliedActionAdjustmentIds.has(adjustment.id)) continue;
+        appliedActionAdjustmentIds.add(adjustment.id);
+        const amount = actor.period * (normalizeEffectPercent(adjustment.percent) / 100);
+        actor.nextAt = adjustment.type === "push" ? actor.nextAt + amount : Math.max(phaseStartAt, actor.nextAt - amount);
+      }
+    }
+  };
 
   const applySupports = (afterEvent, currentAv) => {
     const normalizedAfterEvent = Math.max(0, Math.floor(numberOr(afterEvent, 0)));
@@ -874,6 +914,7 @@ function buildTimeline() {
 
   for (let guard = 0; guard < 1200; guard += 1) {
     if (!actors.length) break;
+    applyActionAdjustments();
     actors.sort((a, b) => a.nextAt - b.nextAt || actorPriority(a) - actorPriority(b));
     const actor = actors[0];
     const currentAv = actor.nextAt;
@@ -893,6 +934,7 @@ function buildTimeline() {
     const event = {
       type: actor.type,
       id: actor.id,
+      eventKey: actorEventKey(actor, phase),
       name: actor.name,
       icon: actor.icon,
       speed: actor.speed,
@@ -905,6 +947,7 @@ function buildTimeline() {
       phaseNaturalIndex: eventPhaseNaturalIndex,
       phase,
     };
+    event.adjustments = getActionAdjustments(event.eventKey);
     timeline.push(event);
 
     naturalCount += 1;
@@ -947,15 +990,44 @@ function renderEventPullControl(event) {
   `;
 }
 
+function renderSupportEventControl(event) {
+  return `
+    <span class="inline-effect">
+      <label>
+        <span>拉条</span>
+        <input type="number" min="0" max="100" step="1" value="${formatNumber(normalizeSupportPercent(event.percent), 0)}" data-support-field="percent" data-support-id="${event.supportId}" />
+        <span>%</span>
+      </label>
+      <button class="inline-delete" type="button" title="删除" data-delete-support="${event.supportId}">×</button>
+    </span>
+  `;
+}
+
+function renderActionAdjustmentControls(event) {
+  if (!event.adjustments?.length) return "";
+  return event.adjustments
+    .map(
+      (adjustment) => `
+        <span class="inline-effect ${adjustment.type}">
+          <span>${getEffectLabel(adjustment.type)}</span>
+          <input type="number" min="0" max="100" step="1" value="${formatNumber(normalizeEffectPercent(adjustment.percent), 0)}" data-action-effect-field="percent" data-action-effect-id="${adjustment.id}" />
+          <span>%</span>
+          <button class="inline-delete" type="button" title="删除" data-delete-action-effect="${adjustment.id}">×</button>
+        </span>
+      `,
+    )
+    .join("");
+}
+
 function renderTimelineSub(event) {
-  if (event.type === "support") return `${escapeHtml(event.detail)} · 第 ${event.afterEvent} 动后`;
+  if (event.type === "support") return renderSupportEventControl(event);
   if (event.type === "phase") return escapeHtml(event.detail);
-  if (event.type === "enemy") return `${phaseName(event.phase)}敌人 · 第 ${event.cycle} 动`;
+  if (event.type === "enemy") return `${phaseName(event.phase)}敌人 · 第 ${event.cycle} 动${renderActionAdjustmentControls(event)}`;
   if (event.type === "aha") return `第 ${event.cycle} 次`;
   if (event.type === "ally") {
     const pieces = [`第 ${event.cycle} 动`];
     if (event.vonwacq && event.cycle === 1 && event.phase === 1) pieces.push("翁瓦克");
-    return `${pieces.map(escapeHtml).join(" · ")}${renderEventPullControl(event)}`;
+    return `${pieces.map(escapeHtml).join(" · ")}${renderEventPullControl(event)}${renderActionAdjustmentControls(event)}`;
   }
   return "";
 }
@@ -1020,11 +1092,13 @@ function renderTimelineRow(event, orderByPhase) {
     ? `<img class="avatar" src="${event.icon}" alt="" />`
     : `<span class="avatar-fallback">${event.type === "enemy" ? "敌" : event.type === "support" ? "舞" : event.type === "phase" ? "转" : event.name.slice(-1)}</span>`;
   const dragAttrs = event.type === "support" ? `draggable="true" data-drag-support-id="${event.supportId}"` : "";
+  const eventAttrs = event.eventKey ? `data-event-key="${escapeAttr(event.eventKey)}"` : "";
+  const adjustableAttrs = event.type === "ally" || event.type === "enemy" ? `data-adjustable-event="true"` : "";
   const phaseClass = phase > 1 ? "after-transition" : "before-transition";
   const boundaryClass = event.type === "phase" ? "phase-boundary" : "";
   const phaseToneClass = phase % 2 === 0 ? "phase-even" : "phase-odd";
   return `
-    <div class="timeline-row ${event.type} ${phaseClass} ${phaseToneClass} ${boundaryClass}" ${dragAttrs} data-drop-index="${event.naturalIndex ?? 0}">
+    <div class="timeline-row ${event.type} ${phaseClass} ${phaseToneClass} ${boundaryClass}" ${dragAttrs} ${eventAttrs} ${adjustableAttrs} data-drop-index="${event.naturalIndex ?? 0}">
       <span class="timeline-order">${orderText}</span>
       ${avatar}
       <div class="timeline-name">
@@ -1058,9 +1132,12 @@ function renderConfigManager() {
   const select = document.querySelector("#configSelect");
   if (!select) return;
   const presets = loadPresets();
-  select.innerHTML = presets.length
-    ? presets.map((preset) => `<option value="${preset.id}">${escapeHtml(preset.name)}</option>`).join("")
-    : '<option value="">暂无已保存方案</option>';
+  if (activePresetId && !presets.some((preset) => preset.id === activePresetId)) activePresetId = "";
+  select.innerHTML = [
+    `<option value="">新建方案</option>`,
+    ...presets.map((preset) => `<option value="${preset.id}">${escapeHtml(preset.name)}</option>`),
+  ].join("");
+  select.value = activePresetId;
 }
 
 function renderAll() {
@@ -1088,7 +1165,7 @@ function initWorkspaceResizer() {
     if (!rect.width || rect.width < 900) return;
     const handleWidth = 8;
     const minLeft = 520;
-    const minRight = 300;
+    const minRight = 500;
     const maxLeft = rect.width - minRight - handleWidth - 24;
     const width = Math.max(minLeft, Math.min(maxLeft, rawWidth));
     workspace.style.gridTemplateColumns = `${Math.round(width)}px ${handleWidth}px minmax(${minRight}px, 1fr)`;
@@ -1134,6 +1211,24 @@ function initWorkspaceResizer() {
   }
 }
 
+function initSidebarToggle() {
+  const shell = document.querySelector(".app-shell");
+  const collapseButton = document.querySelector("#collapseSidebar");
+  const expandButton = document.querySelector("#expandSidebar");
+  if (!shell || !collapseButton || !expandButton) return;
+
+  const setCollapsed = (collapsed) => {
+    shell.classList.toggle("sidebar-collapsed", collapsed);
+    collapseButton.setAttribute("aria-expanded", String(!collapsed));
+    expandButton.setAttribute("aria-expanded", String(!collapsed));
+    localStorage.setItem(sidebarKey, collapsed ? "1" : "0");
+  };
+
+  setCollapsed(localStorage.getItem(sidebarKey) !== "0");
+  collapseButton.addEventListener("click", () => setCollapsed(true));
+  expandButton.addEventListener("click", () => setCollapsed(false));
+}
+
 function updateLimitButtons() {
   document.querySelectorAll("[data-limit]").forEach((button) => {
     button.classList.toggle("active", Number(button.dataset.limit) === state.limit);
@@ -1164,20 +1259,6 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const moveButton = event.target.closest("[data-move-id]");
-  if (moveButton) {
-    const id = moveButton.dataset.moveId;
-    const dir = Number(moveButton.dataset.dir);
-    const index = state.slots.findIndex((slot) => slot.id === id);
-    const nextIndex = index + dir;
-    if (index >= 0 && nextIndex >= 0 && nextIndex < state.slots.length) {
-      const [slot] = state.slots.splice(index, 1);
-      state.slots.splice(nextIndex, 0, slot);
-      renderAll();
-    }
-    return;
-  }
-
   const deleteEnemy = event.target.closest("[data-delete-enemy]");
   if (deleteEnemy) {
     const key = phaseKey();
@@ -1189,6 +1270,13 @@ document.addEventListener("click", (event) => {
   const deleteSupport = event.target.closest("[data-delete-support]");
   if (deleteSupport) {
     state.supports = state.supports.filter((support) => support.id !== deleteSupport.dataset.deleteSupport);
+    renderAll();
+    return;
+  }
+
+  const deleteActionEffect = event.target.closest("[data-delete-action-effect]");
+  if (deleteActionEffect) {
+    state.actionAdjustments = state.actionAdjustments.filter((adjustment) => adjustment.id !== deleteActionEffect.dataset.deleteActionEffect);
     renderAll();
     return;
   }
@@ -1267,6 +1355,16 @@ document.addEventListener("input", (event) => {
     return;
   }
 
+  if (target.matches("[data-action-effect-field]")) {
+    const adjustment = state.actionAdjustments.find((item) => item.id === target.dataset.actionEffectId);
+    if (!adjustment) return;
+    if (target.dataset.actionEffectField === "percent") {
+      adjustment.percent = normalizeEffectPercent(target.value);
+    }
+    refreshComputed();
+    return;
+  }
+
   if (target.matches("[data-transition-field]")) {
     const point = getTransitionPoints().find((item) => item.id === target.dataset.transitionId);
     if (!point) return;
@@ -1312,12 +1410,6 @@ document.addEventListener("change", (event) => {
     return;
   }
 
-  if (target.id === "showAha") {
-    state.showAha = target.checked;
-    refreshComputed();
-    return;
-  }
-
   if (target.id === "showTimelineSpeed") {
     state.showTimelineSpeed = target.checked;
     refreshComputed();
@@ -1350,21 +1442,12 @@ document.querySelector("#addEnemy").addEventListener("click", () => {
   renderAll();
 });
 
-document.querySelector("#addSupport").addEventListener("click", () => {
-  state.supports.push({
-    id: makeId("support"),
-    type: "dance",
-    afterEvent: 0,
-    percent: 24,
-  });
-  renderAll();
-});
-
 document.querySelector("#saveConfig").addEventListener("click", () => {
   const nameInput = document.querySelector("#configName");
   const name = nameInput.value.trim() || `方案 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
   const presets = loadPresets();
-  const existing = presets.find((preset) => preset.name === name);
+  const activePreset = presets.find((preset) => preset.id === activePresetId);
+  const existing = activePreset && activePreset.name === name ? activePreset : activePreset ? null : presets.find((preset) => preset.name === name);
   const preset = {
     id: existing?.id || makeId("preset"),
     name,
@@ -1373,15 +1456,23 @@ document.querySelector("#saveConfig").addEventListener("click", () => {
   };
   const nextPresets = existing ? presets.map((item) => (item.id === existing.id ? preset : item)) : [...presets, preset];
   savePresets(nextPresets);
+  activePresetId = preset.id;
   nameInput.value = name;
   renderConfigManager();
   document.querySelector("#configSelect").value = preset.id;
+});
+
+document.querySelector("#newConfig").addEventListener("click", () => {
+  activePresetId = "";
+  document.querySelector("#configName").value = "";
+  renderConfigManager();
 });
 
 document.querySelector("#loadConfig").addEventListener("click", () => {
   const presetId = document.querySelector("#configSelect").value;
   const preset = loadPresets().find((item) => item.id === presetId);
   if (!preset) return;
+  activePresetId = preset.id;
   replaceState(preset.config);
   document.querySelector("#configName").value = preset.name;
   renderAll();
@@ -1391,39 +1482,52 @@ document.querySelector("#deleteConfig").addEventListener("click", () => {
   const presetId = document.querySelector("#configSelect").value;
   if (!presetId) return;
   savePresets(loadPresets().filter((item) => item.id !== presetId));
+  if (activePresetId === presetId) activePresetId = "";
+  document.querySelector("#configName").value = "";
   renderConfigManager();
 });
 
+document.querySelector("#configSelect").addEventListener("change", (event) => {
+  activePresetId = event.target.value;
+  const preset = loadPresets().find((item) => item.id === activePresetId);
+  document.querySelector("#configName").value = preset?.name || "";
+});
+
 document.addEventListener("dragstart", (event) => {
-  const newDance = event.target.closest("[data-drag-dance]");
+  const isFormControl = event.target.closest("input, select, button, label");
+  const slotRow = event.target.closest("[data-drag-slot-id]");
   const existingDance = event.target.closest("[data-drag-support-id]");
-  const payload = newDance
-    ? { kind: "dance-new" }
+  if (isFormControl && (slotRow || existingDance)) return;
+  const newEffect = event.target.closest("[data-drag-effect]");
+  const payload = slotRow
+    ? { kind: "slot", id: slotRow.dataset.dragSlotId }
+    : newEffect
+      ? { kind: "effect-new", type: newEffect.dataset.dragEffect }
     : existingDance
       ? { kind: "dance-existing", id: existingDance.dataset.dragSupportId }
       : null;
 
   if (!payload) return;
-  event.dataTransfer.effectAllowed = payload.kind === "dance-new" ? "copy" : "move";
+  event.dataTransfer.effectAllowed = payload.kind === "slot" || payload.kind === "dance-existing" ? "move" : "copy";
   event.dataTransfer.setData("application/json", JSON.stringify(payload));
 });
 
 document.addEventListener("dragover", (event) => {
-  const target = event.target.closest("[data-drop-index], #timeline");
+  const target = event.target.closest("[data-slot-row], [data-drop-index], #timeline");
   if (!target) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
-  const row = event.target.closest("[data-drop-index]");
+  const row = event.target.closest("[data-slot-row], [data-drop-index]");
   if (row) row.classList.add("drop-target");
 });
 
 document.addEventListener("dragleave", (event) => {
-  const row = event.target.closest("[data-drop-index]");
+  const row = event.target.closest("[data-slot-row], [data-drop-index]");
   if (row) row.classList.remove("drop-target");
 });
 
 document.addEventListener("drop", (event) => {
-  const target = event.target.closest("[data-drop-index], #timeline");
+  const target = event.target.closest("[data-slot-row], [data-drop-index], #timeline");
   if (!target) return;
   event.preventDefault();
   document.querySelectorAll(".drop-target").forEach((row) => row.classList.remove("drop-target"));
@@ -1436,19 +1540,46 @@ document.addEventListener("drop", (event) => {
   }
   if (!payload) return;
 
+  const slotTarget = event.target.closest("[data-slot-row]");
+  if (payload.kind === "slot" && slotTarget) {
+    const fromIndex = state.slots.findIndex((slot) => slot.id === payload.id);
+    const toIndex = state.slots.findIndex((slot) => slot.id === slotTarget.dataset.slotRow);
+    if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+      const [slot] = state.slots.splice(fromIndex, 1);
+      state.slots.splice(toIndex, 0, slot);
+      renderAll();
+    }
+    return;
+  }
+
   const row = event.target.closest("[data-drop-index]");
   const afterEvent = Math.max(0, Math.floor(numberOr(row?.dataset.dropIndex, 0)));
 
-  if (payload.kind === "dance-new") {
+  if (payload.kind === "effect-new" && payload.type === "dance") {
     state.supports.push({ id: makeId("support"), type: "dance", afterEvent, percent: 24 });
+    renderAll();
+    return;
   }
 
   if (payload.kind === "dance-existing") {
     const support = state.supports.find((item) => item.id === payload.id);
     if (support) support.afterEvent = afterEvent;
+    renderAll();
+    return;
   }
 
-  renderAll();
+  if (payload.kind === "effect-new" && (payload.type === "pull" || payload.type === "push")) {
+    const targetRow = event.target.closest("[data-adjustable-event][data-event-key]");
+    if (!targetRow) return;
+    state.actionAdjustments.push({
+      id: makeId("effect"),
+      type: payload.type,
+      targetKey: targetRow.dataset.eventKey,
+      percent: 0,
+    });
+    renderAll();
+    return;
+  }
 });
 
 document.addEventListener("dragend", () => {
@@ -1457,5 +1588,6 @@ document.addEventListener("dragend", () => {
 
 renderAll();
 initWorkspaceResizer();
+initSidebarToggle();
 
 

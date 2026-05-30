@@ -9,6 +9,7 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
+        <button id="collapseSidebar" class="sidebar-toggle" type="button" title="收起侧栏" aria-label="收起侧栏">&lt;</button>
         <div class="brand">
           <img src="./assets/hsr-tool/logo.png" alt="" class="brand-logo" />
           <div>
@@ -20,6 +21,7 @@
           <a class="nav-item active" href="./index.html">行动轴计算</a>
         </nav>
       </aside>
+      <button id="expandSidebar" class="sidebar-expand" type="button" title="展开侧栏" aria-label="展开侧栏">&gt;</button>
 
       <main class="main">
         <header class="topbar">
@@ -39,7 +41,10 @@
             <section class="panel">
               <div class="panel-head">
                 <h2>配置保存</h2>
-                <button id="saveConfig" class="icon-text-button" type="button">保存</button>
+                <div class="panel-actions">
+                  <button id="newConfig" class="icon-text-button" type="button">新建</button>
+                  <button id="saveConfig" class="icon-text-button" type="button">保存</button>
+                </div>
               </div>
               <div class="config-save">
                 <input id="configName" type="text" placeholder="方案名称" />
@@ -65,8 +70,7 @@
                     <span>最终</span>
                     <span>翁瓦克</span>
                     <span>拉条</span>
-                    <span>目标 / 比例</span>
-                    <span></span>
+                    <span>默认目标 / 比例</span>
                   </div>
                   <div id="allyControls"></div>
                 </div>
@@ -76,10 +80,7 @@
             <section class="panel aha-panel">
               <div class="panel-head">
                 <h2>阿哈时刻</h2>
-                <label class="switch">
-                  <input id="showAha" type="checkbox" checked />
-                  <span>显示</span>
-                </label>
+                <span class="panel-meta">欢愉命途自动加入行动轴</span>
               </div>
               <div class="aha-value compact-aha">
                 <span>速度</span>
@@ -125,23 +126,11 @@
               <div id="transitionControls" class="transition-list"></div>
             </section>
 
-            <section class="panel">
-              <div class="panel-head">
-                <h2>拉条插件</h2>
-                <button id="addSupport" class="icon-text-button" type="button" draggable="true" data-drag-dance="new" title="拖入行动轴">+ 舞舞舞</button>
-              </div>
-              <div class="drag-source" draggable="true" data-drag-dance="new" title="拖入行动轴">
-                <span class="support-badge">舞</span>
-                <span>舞舞舞</span>
-                <span>24%</span>
-              </div>
-              <div id="supportControls" class="support-list"></div>
-            </section>
           </div>
 
           <div class="workspace-resizer" id="workspaceResizer" aria-label="调整左右宽度" role="separator"></div>
 
-          <div class="result-column">
+          <div class="result-column axis-workbench">
             <section class="panel axis-panel">
               <div class="panel-head">
                 <div>
@@ -155,6 +144,28 @@
               </div>
               <div id="timeline" class="timeline"></div>
             </section>
+            <aside class="plugin-palette" aria-label="行动轴插件">
+              <div class="plugin-palette-head">
+                <h2>插件</h2>
+              </div>
+              <div class="plugin-grid">
+                <div class="effect-card dance" draggable="true" data-drag-effect="dance" title="拖入行动轴">
+                  <span class="support-badge">舞</span>
+                  <strong>舞舞舞</strong>
+                  <span>全队拉条 24%</span>
+                </div>
+                <div class="effect-card pull" draggable="true" data-drag-effect="pull" title="拖到角色或敌人行动上">
+                  <span class="effect-badge">拉</span>
+                  <strong>拉条</strong>
+                  <span>单次行动 0%</span>
+                </div>
+                <div class="effect-card push" draggable="true" data-drag-effect="push" title="拖到角色或敌人行动上">
+                  <span class="effect-badge">推</span>
+                  <strong>推条</strong>
+                  <span>单次行动 0%</span>
+                </div>
+              </div>
+            </aside>
           </div>
         </section>
       </main>
