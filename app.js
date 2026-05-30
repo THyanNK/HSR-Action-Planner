@@ -9,6 +9,9 @@ const presetsKey = "hsr-axis-planner-presets-v2";
 const legacyPresetsKey = "hsr-axis-planner-presets-v1";
 const layoutKey = "hsr-axis-layout-v1";
 const sidebarKey = "hsr-axis-sidebar-collapsed-v1";
+const exportType = "hsr-axis-planner-config";
+const exportVersion = 2;
+const shareHashPrefix = "share=";
 
 const legacyCharacterMap = {
   sparkle: "char-1502",
@@ -268,6 +271,200 @@ function cloneConfig() {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function getCurrentConfigName() {
+  const typedName = document.querySelector("#configName")?.value.trim();
+  const activePreset = loadPresets().find((preset) => preset.id === activePresetId);
+  return typedName || activePreset?.name || `方案 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
+}
+
+function makePresetFromCurrent() {
+  return {
+    id: activePresetId || makeId("preset"),
+    name: getCurrentConfigName(),
+    savedAt: Date.now(),
+    config: cloneConfig(),
+  };
+}
+
+function setConfigStatus(message, isError = false) {
+  const status = document.querySelector("#configStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function sanitizeFilename(name) {
+  return String(name || "config")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .trim()
+    .slice(0, 60) || "config";
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildExportPayload(mode) {
+  if (mode === "all") {
+    return {
+      type: exportType,
+      version: exportVersion,
+      mode: "all",
+      exportedAt: new Date().toISOString(),
+      presets: loadPresets(),
+    };
+  }
+
+  return {
+    type: exportType,
+    version: exportVersion,
+    mode: "single",
+    exportedAt: new Date().toISOString(),
+    preset: makePresetFromCurrent(),
+  };
+}
+
+function base64UrlEncode(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value) {
+  const base64 = String(value).replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function normalizeImportedPreset(rawPreset, index = 0) {
+  const raw = rawPreset && typeof rawPreset === "object" ? rawPreset : {};
+  const configSource = raw.config && typeof raw.config === "object" ? raw.config : raw;
+  const fallbackName = `导入配置 ${index + 1}`;
+  return {
+    id: makeId("preset"),
+    name: String(raw.name || fallbackName).trim() || fallbackName,
+    savedAt: Date.now(),
+    config: normalizeState(configSource),
+  };
+}
+
+function extractImportedPresets(payload) {
+  if (!payload || typeof payload !== "object") return [];
+
+  if (payload.type === exportType) {
+    if (payload.mode === "all" && Array.isArray(payload.presets)) return payload.presets.map(normalizeImportedPreset);
+    if (payload.mode === "single" && payload.preset) return [normalizeImportedPreset(payload.preset, 0)];
+  }
+
+  if (Array.isArray(payload.presets)) return payload.presets.map(normalizeImportedPreset);
+  if (payload.preset) return [normalizeImportedPreset(payload.preset, 0)];
+  if (Array.isArray(payload)) return payload.map(normalizeImportedPreset);
+  if (payload.config || payload.slots || payload.enemySets || payload.selectedIds) return [normalizeImportedPreset(payload, 0)];
+
+  return [];
+}
+
+function uniquePresetName(name, presets) {
+  const base = String(name || "导入配置").trim() || "导入配置";
+  let candidate = base;
+  let suffix = 2;
+  while (presets.some((preset) => preset.name === candidate)) {
+    candidate = `${base} (${suffix})`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function importPresets(importedPresets) {
+  if (!importedPresets.length) {
+    setConfigStatus("JSON 中没有可导入的配置", true);
+    return;
+  }
+
+  const presets = loadPresets();
+  const nextPresets = [...presets];
+  const normalized = importedPresets.map((preset) => {
+    const next = {
+      ...preset,
+      id: makeId("preset"),
+      name: uniquePresetName(preset.name, nextPresets),
+      savedAt: Date.now(),
+      config: normalizeState(preset.config),
+    };
+    nextPresets.push(next);
+    return next;
+  });
+
+  savePresets(nextPresets);
+  activePresetId = normalized[0].id;
+  replaceState(normalized[0].config);
+  document.querySelector("#configName").value = normalized[0].name;
+  renderAll();
+  setConfigStatus(`已导入 ${normalized.length} 个配置`);
+}
+
+function buildShareUrl() {
+  const payload = {
+    type: exportType,
+    version: exportVersion,
+    mode: "single",
+    preset: makePresetFromCurrent(),
+  };
+  const url = new URL(window.location.href);
+  url.hash = `${shareHashPrefix}${base64UrlEncode(payload)}`;
+  return url.toString();
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
+function applySharedConfigFromUrl() {
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  if (!hash.startsWith(shareHashPrefix)) return;
+
+  try {
+    const payload = base64UrlDecode(hash.slice(shareHashPrefix.length));
+    const [preset] = extractImportedPresets(payload);
+    if (!preset) throw new Error("empty share payload");
+    activePresetId = "";
+    replaceState(preset.config);
+    document.querySelector("#configName").value = preset.name;
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.hash = "";
+    window.history.replaceState(null, "", cleanUrl.toString());
+    setConfigStatus("已载入分享配置");
+  } catch {
+    setConfigStatus("分享链接无效", true);
+  }
 }
 
 function numberOr(value, fallback) {
@@ -1499,6 +1696,51 @@ document.querySelector("#configSelect").addEventListener("change", (event) => {
   document.querySelector("#configName").value = preset?.name || "";
 });
 
+document.querySelector("#exportCurrentConfig").addEventListener("click", () => {
+  const payload = buildExportPayload("single");
+  downloadJson(`${sanitizeFilename(payload.preset.name)}.json`, payload);
+  setConfigStatus("已导出当前配置");
+});
+
+document.querySelector("#exportAllConfigs").addEventListener("click", () => {
+  const payload = buildExportPayload("all");
+  if (!payload.presets.length) {
+    setConfigStatus("没有已保存的配置可导出", true);
+    return;
+  }
+  downloadJson(`崩铁排轴-全部配置-${new Date().toISOString().slice(0, 10)}.json`, payload);
+  setConfigStatus(`已导出 ${payload.presets.length} 个配置`);
+});
+
+document.querySelector("#importConfigJson").addEventListener("click", () => {
+  document.querySelector("#importConfigFile").click();
+});
+
+document.querySelector("#importConfigFile").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  try {
+    const payload = JSON.parse(await file.text());
+    importPresets(extractImportedPresets(payload));
+  } catch {
+    setConfigStatus("JSON 配置读取失败", true);
+  } finally {
+    event.target.value = "";
+  }
+});
+
+document.querySelector("#shareConfigLink").addEventListener("click", async () => {
+  const shareUrl = buildShareUrl();
+  window.history.replaceState(null, "", shareUrl);
+  try {
+    await copyText(shareUrl);
+    setConfigStatus("分享链接已复制");
+  } catch {
+    setConfigStatus("已生成分享链接，可从地址栏复制");
+  }
+});
+
 document.addEventListener("dragstart", (event) => {
   const isFormControl = event.target.closest("input, select, button, label");
   const slotRow = event.target.closest("[data-drag-slot-id]");
@@ -1596,6 +1838,7 @@ document.addEventListener("dragend", () => {
   document.querySelectorAll(".drop-target").forEach((row) => row.classList.remove("drop-target"));
 });
 
+applySharedConfigFromUrl();
 renderAll();
 initWorkspaceResizer();
 initSidebarToggle();

@@ -53,6 +53,14 @@
                 <button id="loadConfig" class="icon-text-button" type="button">加载</button>
                 <button id="deleteConfig" class="icon-text-button danger" type="button">删除</button>
               </div>
+              <div class="config-tools">
+                <button id="exportCurrentConfig" class="icon-text-button" type="button">导出当前</button>
+                <button id="exportAllConfigs" class="icon-text-button" type="button">导出全部</button>
+                <button id="importConfigJson" class="icon-text-button" type="button">导入 JSON</button>
+                <button id="shareConfigLink" class="icon-text-button" type="button">分享链接</button>
+                <input id="importConfigFile" class="visually-hidden" type="file" accept="application/json,.json" />
+                <span id="configStatus" class="config-status" role="status" aria-live="polite"></span>
+              </div>
             </section>
 
             <section class="panel">

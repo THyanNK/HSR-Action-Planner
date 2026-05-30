@@ -660,11 +660,40 @@ select:focus {
   background: var(--primary);
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 .config-save {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 74px 74px;
   gap: 10px;
   padding: 14px;
+}
+
+.config-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.config-status {
+  min-height: 18px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.config-status.error {
+  color: var(--red);
 }
 
 .mini-check {
