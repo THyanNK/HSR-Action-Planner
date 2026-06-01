@@ -13,6 +13,11 @@ const tutorialSeenKey = "hsr-axis-tutorial-seen-v1";
 const exportType = "hsr-axis-planner-config";
 const exportVersion = 2;
 const shareHashPrefix = "share=";
+const actionTypes = ["Q", "E"];
+const actionTypeLabels = {
+  Q: "普攻",
+  E: "战技",
+};
 
 const legacyCharacterMap = {
   sparkle: "char-1502",
@@ -46,8 +51,10 @@ function getDefaultState() {
     },
     activeEnemyPhase: 1,
     supports: [],
+    ultimates: [],
     actionAdjustments: [],
     pullOverrides: {},
+    actionTypeOverrides: {},
     transition: {
       enabled: false,
       phaseColumns: false,
@@ -56,6 +63,7 @@ function getDefaultState() {
     limit: 300,
     showAha: true,
     showTimelineSpeed: false,
+    showDetailedActions: false,
   };
 }
 
@@ -77,11 +85,13 @@ function createSlot(id, characterId = "", overrides = {}) {
     customName: "",
     base: character ? character.baseSpeed : 100,
     percent: 0,
-    flat: 0,
     vonwacq: false,
     pullEnabled: false,
     pullTargetSlotId: "",
     pullPercent: 50,
+    defaultActionType: "Q",
+    windSet: false,
+    danceOnUltimate: false,
     ...overrides,
   };
 }
@@ -121,17 +131,21 @@ function normalizeState(source) {
   next.enemySets.phase2 = Array.isArray(next.enemySets.phase2) ? next.enemySets.phase2 : clone(base.enemySets.phase2);
   next.activeEnemyPhase = Math.max(1, Math.floor(numberOr(source?.activeEnemyPhase, 1)));
   next.supports = Array.isArray(source?.supports) ? source.supports : [];
+  next.ultimates = Array.isArray(source?.ultimates) ? source.ultimates : [];
   next.actionAdjustments = Array.isArray(source?.actionAdjustments) ? source.actionAdjustments : [];
   next.pullOverrides = source?.pullOverrides && typeof source.pullOverrides === "object" ? source.pullOverrides : {};
+  next.actionTypeOverrides = normalizeActionTypeOverrides(source?.actionTypeOverrides || source?.actionTypes);
   next.limit = [150, 300, 600].includes(Number(source?.limit)) ? Number(source.limit) : 300;
   next.showAha = source?.showAha !== false;
   next.showTimelineSpeed = source?.showTimelineSpeed === true;
+  next.showDetailedActions = source?.showDetailedActions === true;
   next.supports = next.supports.map((support) => ({
     id: support.id || makeId("support"),
     type: "dance",
     afterEvent: Math.max(0, Math.floor(numberOr(support.afterEvent, 0))),
     percent: normalizeSupportPercent(support.percent),
   }));
+  next.ultimates = next.ultimates.map((ultimate) => normalizeUltimate(ultimate, next)).filter((ultimate) => ultimate.sourceSlotId);
   next.actionAdjustments = next.actionAdjustments
     .map((adjustment) => ({
       id: adjustment.id || makeId("effect"),
@@ -144,6 +158,24 @@ function normalizeState(source) {
   ensureEnemySets(next);
   ensureAllPullTargets(next);
   return next;
+}
+
+function normalizeActionTypeOverrides(source) {
+  const normalized = {};
+  if (!source || typeof source !== "object") return normalized;
+  for (const [key, value] of Object.entries(source)) {
+    normalized[String(key)] = normalizeActionType(value);
+  }
+  return normalized;
+}
+
+function normalizeUltimate(source, targetState = state) {
+  const raw = source && typeof source === "object" ? source : {};
+  return {
+    id: raw.id || makeId("ultimate"),
+    afterEvent: Math.max(0, Math.floor(numberOr(raw.afterEvent, 0))),
+    sourceSlotId: getValidUltimateSlotId(raw.sourceSlotId || raw.slotId, targetState),
+  };
 }
 
 function normalizeTransition(source) {
@@ -198,11 +230,13 @@ function normalizeLegacySlots(source) {
         customName: character ? "" : cfg.name || "",
         base: numberOr(cfg.base, character?.baseSpeed ?? 100),
         percent: cfg.percent,
-        flat: cfg.flat,
         vonwacq: cfg.vonwacq,
         pullEnabled: cfg.pullEnabled,
         pullTargetSlotId: legacyToSlot.get(cfg.pullTargetId) || "",
         pullPercent: cfg.pullPercent,
+        defaultActionType: cfg.defaultActionType,
+        windSet: cfg.windSet,
+        danceOnUltimate: cfg.danceOnUltimate,
       },
       index,
     );
@@ -218,17 +252,20 @@ function normalizeLegacySlots(source) {
 function normalizeSlot(raw, index) {
   const character = getCharacter(raw.characterId) || findCharacterByInput(raw.name || raw.customName || "", { fuzzy: false });
   const fallbackBase = character?.baseSpeed ?? 100;
+  const pullEnabled = Boolean(raw.pullEnabled);
   return {
     id: raw.id || `slot-${index + 1}`,
     characterId: character?.id || "",
     customName: character ? "" : String(raw.customName || raw.name || "").trim(),
     base: clampSpeed(numberOr(raw.base, fallbackBase)),
     percent: numberOr(raw.percent, 0),
-    flat: numberOr(raw.flat, 0),
     vonwacq: Boolean(raw.vonwacq),
-    pullEnabled: Boolean(raw.pullEnabled),
+    pullEnabled,
     pullTargetSlotId: raw.pullTargetSlotId || raw.pullTargetId || "",
     pullPercent: normalizePullPercent(raw.pullPercent),
+    defaultActionType: normalizeActionType(raw.defaultActionType || (pullEnabled ? "E" : "Q")),
+    windSet: Boolean(raw.windSet),
+    danceOnUltimate: Boolean(raw.danceOnUltimate),
   };
 }
 
@@ -488,6 +525,11 @@ function normalizeEffectPercent(value) {
   return Math.min(100, Math.max(0, parsed));
 }
 
+function normalizeActionType(value) {
+  const actionType = String(value || "Q").toUpperCase();
+  return actionTypes.includes(actionType) ? actionType : "Q";
+}
+
 function clampSpeed(value) {
   return Math.max(1, numberOr(value, 1));
 }
@@ -535,6 +577,44 @@ function getCharacter(id) {
 
 function getSlotById(id) {
   return state.slots.find((slot) => slot.id === id);
+}
+
+function getSlotByIdFrom(targetState, id) {
+  return (targetState.slots || []).find((slot) => slot.id === id) || null;
+}
+
+function getValidUltimateSlotId(slotId, targetState = state) {
+  const slots = targetState.slots || [];
+  if (slotId && slots.some((slot) => slot.id === slotId && getAlly(slot, slots.indexOf(slot)))) return slotId;
+  const fallback = slots.find((slot, index) => getAlly(slot, index));
+  return fallback?.id || "";
+}
+
+function ensureUltimateSource(ultimate, targetState = state) {
+  const sourceSlotId = getValidUltimateSlotId(ultimate.sourceSlotId, targetState);
+  ultimate.sourceSlotId = sourceSlotId;
+  return sourceSlotId;
+}
+
+function isHarmonyCharacter(character) {
+  return Boolean(character && (character.path === "Harmony" || character.pathName === "同谐"));
+}
+
+function actionTypeKey(phase, sourceSlotId, cycle) {
+  return `${Math.max(1, Math.floor(numberOr(phase, 1)))}:${sourceSlotId}:${Math.max(1, Math.floor(numberOr(cycle, 1)))}`;
+}
+
+function getDefaultActionType(sourceSlotId) {
+  const slot = getSlotById(sourceSlotId);
+  return normalizeActionType(slot?.defaultActionType || (slot?.pullEnabled ? "E" : "Q"));
+}
+
+function getActionType(phase, sourceSlotId, cycle) {
+  const key = actionTypeKey(phase, sourceSlotId, cycle);
+  if (Object.prototype.hasOwnProperty.call(state.actionTypeOverrides || {}, key)) {
+    return normalizeActionType(state.actionTypeOverrides[key]);
+  }
+  return getDefaultActionType(sourceSlotId);
 }
 
 function getCharacterLabel(character) {
@@ -598,9 +678,8 @@ function getAlly(slot, index = 0) {
 
   const base = clampSpeed(slot.base);
   const percent = numberOr(slot.percent, 0);
-  const flat = numberOr(slot.flat, 0);
   const percentBase = character?.baseSpeed ?? base;
-  const speed = clampSpeed(base + percentBase * (percent / 100) + flat);
+  const speed = clampSpeed(base + percentBase * (percent / 100));
 
   return {
     id: slot.id,
@@ -609,7 +688,6 @@ function getAlly(slot, index = 0) {
     base,
     percentBase,
     percent,
-    flat,
     speed,
     icon: character?.icon || "",
     character,
@@ -618,6 +696,10 @@ function getAlly(slot, index = 0) {
     pullEnabled: Boolean(slot.pullEnabled),
     pullTargetSlotId: slot.pullTargetSlotId,
     pullPercent: normalizePullPercent(slot.pullPercent),
+    defaultActionType: normalizeActionType(slot.defaultActionType || (slot.pullEnabled ? "E" : "Q")),
+    windSet: Boolean(slot.windSet),
+    danceOnUltimate: Boolean(slot.danceOnUltimate && isHarmonyCharacter(character)),
+    isHarmony: isHarmonyCharacter(character),
     position: index + 1,
   };
 }
@@ -708,6 +790,12 @@ function getEffectLabel(type) {
   return type === "push" ? "推条" : "拉条";
 }
 
+function getUltimateSourceOptions(selectedId) {
+  return getSelectedAllies()
+    .map((ally) => `<option value="${ally.id}" ${ally.id === selectedId ? "selected" : ""}>${escapeHtml(ally.name)}</option>`)
+    .join("");
+}
+
 function renderCharacterOptions() {
   const list = document.querySelector("#characterOptions");
   if (!list) return;
@@ -734,6 +822,7 @@ function renderCharacterOptions() {
 
 function renderAllies() {
   const wrap = document.querySelector("#allyControls");
+  wrap?.closest(".ally-table")?.classList.toggle("show-detail-actions", state.showDetailedActions);
   const allies = getSelectedAllies();
 
   wrap.innerHTML = state.slots
@@ -748,9 +837,17 @@ function renderAllies() {
       const avatar = ally?.icon
         ? `<img class="avatar" src="${ally.icon}" alt="" />`
         : `<span class="avatar-fallback">${escapeHtml((ally?.name || String(index + 1)).slice(-1))}</span>`;
+      const danceControl = ally?.isHarmony
+        ? `<label class="mini-check" title="开大后自动紧跟舞舞舞">
+            <input type="checkbox" ${ally.danceOnUltimate ? "checked" : ""} data-slot-toggle="danceOnUltimate" data-slot-id="${slot.id}" />
+          </label>`
+        : `<span class="option-placeholder"></span>`;
       const nameValue = character?.name || slot.customName || "";
       const finalSpeed = ally ? formatNumber(ally.speed, 1) : "-";
       const rowClass = ally ? "" : "empty-slot";
+      const defaultActionOptions = actionTypes
+        .map((type) => `<option value="${type}" ${ally?.defaultActionType === type ? "selected" : ""}>${actionTypeLabels[type]}</option>`)
+        .join("");
 
       return `
         <div class="table-row ${rowClass}" draggable="true" data-drag-slot-id="${slot.id}" data-slot-row="${slot.id}">
@@ -761,14 +858,22 @@ function renderAllies() {
               <input class="character-input" type="text" list="characterOptions" value="${escapeAttr(nameValue)}" placeholder="输入角色名或选择" data-slot-character="${slot.id}" />
             </div>
           </div>
-          <input type="number" min="1" step="0.1" value="${formatNumber(slot.base, 1)}" data-slot-field="base" data-slot-id="${slot.id}" />
-          <input type="number" step="0.1" value="${formatNumber(slot.percent, 1)}" data-slot-field="percent" data-slot-id="${slot.id}" />
-          <input type="number" step="0.1" value="${formatNumber(slot.flat, 1)}" data-slot-field="flat" data-slot-id="${slot.id}" />
+          <input type="number" min="1" step="1" value="${formatNumber(slot.base, 1)}" data-slot-field="base" data-slot-id="${slot.id}" />
+          <input type="number" step="1" value="${formatNumber(slot.percent, 1)}" data-slot-field="percent" data-slot-id="${slot.id}" />
           <span class="final-speed" data-final-for="${slot.id}">${finalSpeed}</span>
           <button class="toggle-pill ${ally?.vonwacq ? "active" : ""}" type="button" data-vonwacq-id="${slot.id}" ${ally ? "" : "disabled"}>翁瓦克</button>
           <label class="mini-check" title="行动后拉条">
             <input type="checkbox" ${ally?.pullEnabled && !pullDisabled ? "checked" : ""} ${pullDisabled ? "disabled" : ""} data-pull-field="enabled" data-pull-id="${slot.id}" />
           </label>
+          <label class="mini-check" title="风套：非自身回合开大后自身下次行动提前 25%">
+            <input type="checkbox" ${ally?.windSet ? "checked" : ""} ${ally ? "" : "disabled"} data-slot-toggle="windSet" data-slot-id="${slot.id}" />
+          </label>
+          ${danceControl}
+          <div class="detail-action-cell">
+            <select ${ally ? "" : "disabled"} data-slot-default-action="${slot.id}" title="默认行动">
+              ${defaultActionOptions}
+            </select>
+          </div>
           <div class="pull-target-cell">
             ${
               showPullTarget
@@ -807,7 +912,7 @@ function renderEnemies() {
         <div class="table-row" data-enemy-row="${enemy.id}">
           <span class="slot">${index + 1}</span>
           <input type="text" value="${escapeAttr(enemy.name || `敌人 ${index + 1}`)}" data-enemy-field="name" data-enemy-id="${enemy.id}" />
-          <input type="number" min="1" step="0.1" value="${formatNumber(clampSpeed(enemy.speed), 1)}" data-enemy-field="speed" data-enemy-id="${enemy.id}" />
+          <input type="number" min="1" step="1" value="${formatNumber(clampSpeed(enemy.speed), 1)}" data-enemy-field="speed" data-enemy-id="${enemy.id}" />
           <span class="enemy-av" data-enemy-av="${enemy.id}">${formatNumber(av, 1)}</span>
           <button class="icon-button" type="button" title="删除" data-delete-enemy="${enemy.id}">×</button>
         </div>
@@ -857,7 +962,7 @@ function renderTransition() {
             </label>
             <label class="control-field" ${point.mode === "av" ? "" : "hidden"}>
               <span>转面 AV</span>
-              <input type="number" min="0" step="0.1" value="${formatNumber(point.av, 1)}" data-transition-field="av" data-transition-id="${point.id}" />
+              <input type="number" min="0" step="1" value="${formatNumber(point.av, 1)}" data-transition-field="av" data-transition-id="${point.id}" />
             </label>
             <label class="control-field" ${point.mode === "event" ? "" : "hidden"}>
               <span>第 N 动后</span>
@@ -937,7 +1042,7 @@ function actorPriority(actor) {
   return 999;
 }
 
-function makeActors({ phase, startAt, useVonwacq }) {
+function makeActors({ phase, startAt, useVonwacq, carryoverAha = null }) {
   const allies = getSelectedAllies().map((ally) => {
     const period = 10000 / ally.speed;
     return {
@@ -968,6 +1073,7 @@ function makeActors({ phase, startAt, useVonwacq }) {
 
   if (aha.parts.length && aha.speed > 0) {
     const period = 10000 / aha.speed;
+    const keepAhaProgress = carryoverAha?.type === "aha";
     actors.push({
       uid: "aha",
       id: "aha",
@@ -976,8 +1082,8 @@ function makeActors({ phase, startAt, useVonwacq }) {
       icon: `${assetBase}/aha.png`,
       speed: aha.speed,
       period,
-      nextAt: startAt + period,
-      cycle: 1,
+      nextAt: keepAhaProgress ? Math.max(startAt, numberOr(carryoverAha.nextAt, startAt + period)) : startAt + period,
+      cycle: keepAhaProgress ? Math.max(1, Math.floor(numberOr(carryoverAha.cycle, 1))) : 1,
       position: 1,
     });
   }
@@ -985,8 +1091,9 @@ function makeActors({ phase, startAt, useVonwacq }) {
   return actors;
 }
 
-function applyRolePull(actor, actors, currentAv, phase, naturalIndex) {
+function applyRolePull(actor, actors, currentAv, phase, naturalIndex, actionType) {
   if (actor.type !== "ally") return null;
+  if (actionType !== "E") return null;
   const setting = getPullSettings(actor.id, phase, naturalIndex);
   if (!setting) return null;
   const target = actors.find((item) => item.type === "ally" && item.id === setting.targetId);
@@ -1013,6 +1120,7 @@ function getTransitionConfig() {
 function buildTimeline() {
   const timeline = [];
   const appliedSupportIds = new Set();
+  const appliedUltimateIds = new Set();
   const appliedActionAdjustmentIds = new Set();
   const limit = state.limit;
   const transition = getTransitionConfig();
@@ -1020,12 +1128,31 @@ function buildTimeline() {
   let transitionIndex = 0;
   let naturalCount = 0;
   let phaseNaturalCount = 0;
+  let timelineCount = 0;
+  let phaseTimelineCount = 0;
   let phase = 1;
   let phaseStartAt = 0;
   let actors = makeActors({ phase, startAt: phaseStartAt, useVonwacq: true });
 
   const phaseAv = (absoluteAv) => Math.max(0, absoluteAv - phaseStartAt);
   const pendingTransition = () => transitionPoints[transitionIndex] || null;
+  const pushTimelineEvent = (event) => {
+    if (event.type !== "phase") {
+      timelineCount += 1;
+      phaseTimelineCount += 1;
+      event.timelineIndex = timelineCount;
+      event.phaseTimelineIndex = phaseTimelineCount;
+    }
+    timeline.push(event);
+    return event;
+  };
+  const applyEventTransition = (currentAv) => {
+    const point = pendingTransition();
+    if (point?.mode !== "event" || phaseTimelineCount < point.afterEvent) return false;
+    doTransition(currentAv);
+    applyImmediateTransitions();
+    return true;
+  };
   const applyActionAdjustments = () => {
     for (const actor of actors) {
       if (actor.type !== "ally" && actor.type !== "enemy") continue;
@@ -1040,6 +1167,88 @@ function buildTimeline() {
     }
   };
 
+  const applyDanceAdvance = (currentAv, percent) => {
+    for (const actor of actors) {
+      if (actor.type !== "ally") continue;
+      actor.nextAt = Math.max(currentAv, actor.nextAt - actor.period * (percent / 100));
+    }
+  };
+
+  const pushAutoDance = (sourceName, currentAv, afterEvent) => {
+    if (phaseAv(currentAv) - limit > 1e-8) return;
+    const percent = 24;
+    pushTimelineEvent({
+      type: "support",
+      automatic: true,
+      name: "舞舞舞",
+      speed: 0,
+      av: phaseAv(currentAv),
+      absoluteAv: currentAv,
+      detail: `${sourceName}开大触发 · 全队提前 ${percent}%`,
+      afterEvent,
+      percent,
+      naturalIndex: afterEvent,
+      phase,
+    });
+    applyDanceAdvance(currentAv, percent);
+    applyEventTransition(currentAv);
+  };
+
+  const applyUltimateEffects = (sourceSlotId, currentAv, sourceEvent, afterEvent) => {
+    const sourceActor = actors.find((actor) => actor.type === "ally" && actor.id === sourceSlotId);
+    if (!sourceActor) return [];
+    const effects = [];
+    const isOwnTurn = Boolean(sourceEvent?.type === "ally" && sourceEvent.id === sourceSlotId);
+
+    if (sourceActor.windSet && !isOwnTurn) {
+      sourceActor.nextAt = Math.max(currentAv, sourceActor.nextAt - sourceActor.period * 0.25);
+      effects.push("风套提前 25%");
+    }
+
+    if (sourceActor.danceOnUltimate) {
+      pushAutoDance(sourceActor.name, currentAv, afterEvent);
+      effects.push("舞舞舞 24%");
+    }
+
+    return effects;
+  };
+
+  const applyUltimates = (afterEvent, currentAv, sourceEvent) => {
+    const normalizedAfterEvent = Math.max(0, Math.floor(numberOr(afterEvent, 0)));
+    const matches = state.ultimates
+      .filter((ultimate) => Math.max(0, Math.floor(numberOr(ultimate.afterEvent, 0))) === normalizedAfterEvent)
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const ultimate of matches) {
+      if (appliedUltimateIds.has(ultimate.id) || phaseAv(currentAv) - limit > 1e-8) continue;
+      const sourceSlotId = ensureUltimateSource(ultimate);
+      if (!sourceSlotId) continue;
+      const sourceActor = actors.find((actor) => actor.type === "ally" && actor.id === sourceSlotId);
+      const sourceAlly = getSelectedAllies().find((ally) => ally.id === sourceSlotId);
+      const source = sourceActor || sourceAlly;
+      if (!source) continue;
+      appliedUltimateIds.add(ultimate.id);
+      const ultimateEvent = {
+        type: "ultimate",
+        ultimateId: ultimate.id,
+        id: sourceSlotId,
+        sourceSlotId,
+        name: `${source.name} 大招`,
+        icon: source.icon,
+        speed: 0,
+        av: phaseAv(currentAv),
+        absoluteAv: currentAv,
+        detail: "插入大招",
+        afterEvent: normalizedAfterEvent,
+        naturalIndex: normalizedAfterEvent,
+        phase,
+      };
+      pushTimelineEvent(ultimateEvent);
+      ultimateEvent.ultimateEffects = applyUltimateEffects(sourceSlotId, currentAv, sourceEvent, normalizedAfterEvent);
+      applyEventTransition(currentAv);
+    }
+  };
+
   const applySupports = (afterEvent, currentAv) => {
     const normalizedAfterEvent = Math.max(0, Math.floor(numberOr(afterEvent, 0)));
     const matches = state.supports
@@ -1049,7 +1258,7 @@ function buildTimeline() {
     for (const support of matches) {
       if (appliedSupportIds.has(support.id) || phaseAv(currentAv) - limit > 1e-8) continue;
       appliedSupportIds.add(support.id);
-      timeline.push({
+      pushTimelineEvent({
         type: "support",
         supportId: support.id,
         name: "舞舞舞",
@@ -1063,11 +1272,14 @@ function buildTimeline() {
         phase,
       });
 
-      for (const actor of actors) {
-        if (actor.type !== "ally") continue;
-        actor.nextAt = Math.max(currentAv, actor.nextAt - actor.period * (normalizeSupportPercent(support.percent) / 100));
-      }
+      applyDanceAdvance(currentAv, normalizeSupportPercent(support.percent));
+      applyEventTransition(currentAv);
     }
+  };
+
+  const applyPostActionEffects = (afterEvent, currentAv, sourceEvent) => {
+    applyUltimates(afterEvent, currentAv, sourceEvent);
+    applySupports(afterEvent, currentAv);
   };
 
   const doTransition = (av) => {
@@ -1076,6 +1288,7 @@ function buildTimeline() {
     const fromPhase = phase;
     const toPhase = phase + 1;
     const sourceAv = phaseAv(av);
+    const carryoverAha = actors.find((actor) => actor.type === "aha") || null;
     timeline.push({
       type: "phase",
       name: `转面 ${transitionIndex + 1}`,
@@ -1094,7 +1307,8 @@ function buildTimeline() {
     phase = toPhase;
     phaseStartAt = av;
     phaseNaturalCount = 0;
-    actors = makeActors({ phase, startAt: phaseStartAt, useVonwacq: false });
+    phaseTimelineCount = 0;
+    actors = makeActors({ phase, startAt: phaseStartAt, useVonwacq: false, carryoverAha });
   };
 
   const applyImmediateTransitions = () => {
@@ -1115,7 +1329,7 @@ function buildTimeline() {
 
   applyImmediateTransitions();
 
-  applySupports(0, 0);
+  applyPostActionEffects(0, 0, null);
 
   for (let guard = 0; guard < 1200; guard += 1) {
     if (!actors.length) break;
@@ -1136,6 +1350,7 @@ function buildTimeline() {
 
     const eventNaturalIndex = naturalCount + 1;
     const eventPhaseNaturalIndex = phaseNaturalCount + 1;
+    const eventActionType = actor.type === "ally" ? getActionType(phase, actor.id, actor.cycle) : "";
     const event = {
       type: actor.type,
       id: actor.id,
@@ -1151,24 +1366,21 @@ function buildTimeline() {
       naturalIndex: eventNaturalIndex,
       phaseNaturalIndex: eventPhaseNaturalIndex,
       phase,
+      actionType: eventActionType,
+      actionTypeKey: actor.type === "ally" ? actionTypeKey(phase, actor.id, actor.cycle) : "",
     };
     event.adjustments = getActionAdjustments(event.eventKey);
-    timeline.push(event);
+    pushTimelineEvent(event);
 
     naturalCount += 1;
     phaseNaturalCount += 1;
     actor.cycle += 1;
     actor.nextAt = currentAv + actor.period;
-    event.pull = applyRolePull(actor, actors, currentAv, phase, eventPhaseNaturalIndex);
+    event.pull = applyRolePull(actor, actors, currentAv, phase, eventPhaseNaturalIndex, event.actionType);
     event.detailExtra = event.pull ? `拉条 ${event.pull.targetName} ${event.pull.percent}%` : "";
+    applyEventTransition(currentAv);
 
-    const nextPoint = pendingTransition();
-    if (nextPoint?.mode === "event" && phaseNaturalCount >= nextPoint.afterEvent) {
-      doTransition(currentAv);
-      applyImmediateTransitions();
-    }
-
-    applySupports(naturalCount, currentAv);
+    applyPostActionEffects(naturalCount, currentAv, event);
   }
 
   return timeline.filter((event) => event.av <= limit + 1e-8);
@@ -1195,7 +1407,45 @@ function renderEventPullControl(event) {
   `;
 }
 
+function renderActionTypeControl(event) {
+  const options = actionTypes
+    .map((type) => `<option value="${type}" ${event.actionType === type ? "selected" : ""}>${actionTypeLabels[type]}</option>`)
+    .join("");
+  return `
+    <span class="inline-action-type">
+      <select title="本次行动类型" data-action-type-key="${escapeAttr(event.actionTypeKey)}">
+        ${options}
+      </select>
+    </span>
+  `;
+}
+
+function renderUltimateEventControl(event) {
+  const sourceOptions = getUltimateSourceOptions(event.sourceSlotId);
+  const effects = event.ultimateEffects?.length
+    ? `<span class="ultimate-effect-line">${event.ultimateEffects.map(escapeHtml).join(" · ")}</span>`
+    : "";
+  return `
+    <span class="inline-effect ultimate">
+      <select data-ultimate-field="sourceSlotId" data-ultimate-id="${event.ultimateId}">
+        ${sourceOptions}
+      </select>
+      ${effects}
+      <button class="inline-delete" type="button" title="删除" data-delete-ultimate="${event.ultimateId}">×</button>
+    </span>
+  `;
+}
+
 function renderSupportEventControl(event) {
+  if (event.automatic) {
+    return `
+      <span class="inline-effect automatic">
+        <span>自动</span>
+        <span>${escapeHtml(event.detail)}</span>
+      </span>
+    `;
+  }
+
   return `
     <span class="inline-effect">
       <label>
@@ -1226,13 +1476,16 @@ function renderActionAdjustmentControls(event) {
 
 function renderTimelineSub(event) {
   if (event.type === "support") return renderSupportEventControl(event);
+  if (event.type === "ultimate") return renderUltimateEventControl(event);
   if (event.type === "phase") return escapeHtml(event.detail);
   if (event.type === "enemy") return `${phaseName(event.phase)}敌人 · 第 ${event.cycle} 动${renderActionAdjustmentControls(event)}`;
   if (event.type === "aha") return `第 ${event.cycle} 次`;
   if (event.type === "ally") {
     const pieces = [`第 ${event.cycle} 动`];
     if (event.vonwacq && event.cycle === 1 && event.phase === 1) pieces.push("翁瓦克");
-    return `${pieces.map(escapeHtml).join(" · ")}${renderEventPullControl(event)}${renderActionAdjustmentControls(event)}`;
+    const effects = event.ultimateEffects?.length ? ` · ${event.ultimateEffects.join(" · ")}` : "";
+    const actionTypeControl = state.showDetailedActions ? renderActionTypeControl(event) : "";
+    return `${actionTypeControl}${pieces.map(escapeHtml).join(" · ")}${escapeHtml(effects)}${renderEventPullControl(event)}${renderActionAdjustmentControls(event)}`;
   }
   return "";
 }
@@ -1242,6 +1495,7 @@ function renderTimeline() {
   const wrap = document.querySelector("#timeline");
   document.querySelector("#axisMeta").textContent = `${state.transition.enabled ? "每面 " : ""}上限 ${state.limit} AV，共 ${timeline.length} 项`;
   document.querySelector("#showTimelineSpeed").checked = state.showTimelineSpeed;
+  document.querySelector("#toggleDetailedActions")?.classList.toggle("active", state.showDetailedActions);
   wrap.classList.toggle("show-speed", state.showTimelineSpeed);
   wrap.classList.toggle("phase-columns", Boolean(state.transition.enabled && state.transition.phaseColumns));
 
@@ -1295,8 +1549,13 @@ function renderTimelineRow(event, orderByPhase) {
         })();
   const avatar = event.icon
     ? `<img class="avatar" src="${event.icon}" alt="" />`
-    : `<span class="avatar-fallback">${event.type === "enemy" ? "敌" : event.type === "support" ? "舞" : event.type === "phase" ? "转" : event.name.slice(-1)}</span>`;
-  const dragAttrs = event.type === "support" ? `draggable="true" data-drag-support-id="${event.supportId}"` : "";
+    : `<span class="avatar-fallback">${event.type === "enemy" ? "敌" : event.type === "support" ? "舞" : event.type === "ultimate" ? "大" : event.type === "phase" ? "转" : event.name.slice(-1)}</span>`;
+  const dragAttrs =
+    event.type === "support" && !event.automatic
+      ? `draggable="true" data-drag-support-id="${event.supportId}"`
+      : event.type === "ultimate"
+        ? `draggable="true" data-drag-ultimate-id="${event.ultimateId}"`
+        : "";
   const eventAttrs = event.eventKey ? `data-event-key="${escapeAttr(event.eventKey)}"` : "";
   const adjustableAttrs = event.type === "ally" || event.type === "enemy" ? `data-adjustable-event="true"` : "";
   const phaseClass = phase > 1 ? "after-transition" : "before-transition";
@@ -1562,6 +1821,13 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  const deleteUltimate = event.target.closest("[data-delete-ultimate]");
+  if (deleteUltimate) {
+    state.ultimates = state.ultimates.filter((ultimate) => ultimate.id !== deleteUltimate.dataset.deleteUltimate);
+    renderAll();
+    return;
+  }
+
   const deleteActionEffect = event.target.closest("[data-delete-action-effect]");
   if (deleteActionEffect) {
     state.actionAdjustments = state.actionAdjustments.filter((adjustment) => adjustment.id !== deleteActionEffect.dataset.deleteActionEffect);
@@ -1607,10 +1873,17 @@ document.addEventListener("click", (event) => {
     ensureEnemySets();
     renderEnemies();
     refreshComputed();
+    return;
+  }
+
+  if (event.target.closest("#toggleDetailedActions")) {
+    state.showDetailedActions = !state.showDetailedActions;
+    renderAllies();
+    refreshComputed();
   }
 });
 
-document.addEventListener("input", (event) => {
+document.addEventListener("change", (event) => {
   const target = event.target;
 
   if (target.matches("[data-slot-field]")) {
@@ -1631,6 +1904,71 @@ document.addEventListener("input", (event) => {
     return;
   }
 
+  if (target.matches("[data-slot-character]")) {
+    const slot = getSlotById(target.dataset.slotCharacter);
+    if (!slot) return;
+    applyCharacterInput(slot, target.value, { fuzzy: true });
+    renderAll();
+    return;
+  }
+
+  if (target.matches("[data-slot-toggle]")) {
+    const slot = getSlotById(target.dataset.slotId);
+    if (!slot) return;
+    const field = target.dataset.slotToggle;
+    if (field === "windSet") slot.windSet = target.checked;
+    if (field === "danceOnUltimate") {
+      const character = getCharacter(slot.characterId);
+      slot.danceOnUltimate = target.checked && isHarmonyCharacter(character);
+    }
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-pull-field]")) {
+    const slot = getSlotById(target.dataset.pullId);
+    if (!slot) return;
+    const field = target.dataset.pullField;
+    if (field === "enabled") {
+      slot.pullEnabled = target.checked;
+      slot.defaultActionType = target.checked ? "E" : "Q";
+    }
+    if (field === "target") slot.pullTargetSlotId = target.value;
+    if (field === "percent") slot.pullPercent = normalizePullPercent(target.value);
+    renderAllies();
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-action-type-key]")) {
+    const key = target.dataset.actionTypeKey;
+    const actionType = normalizeActionType(target.value);
+    state.actionTypeOverrides[key] = actionType;
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-slot-default-action]")) {
+    const slot = getSlotById(target.dataset.slotDefaultAction);
+    if (!slot) return;
+    slot.defaultActionType = normalizeActionType(target.value);
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-event-pull-field]")) {
+    const key = target.dataset.eventPullKey;
+    if (!state.pullOverrides[key]) state.pullOverrides[key] = {};
+    if (target.dataset.eventPullField === "target") {
+      state.pullOverrides[key].targetId = target.value;
+    }
+    if (target.dataset.eventPullField === "percent") {
+      state.pullOverrides[key].percent = normalizePullPercent(target.value);
+    }
+    refreshComputed();
+    return;
+  }
+
   if (target.matches("[data-support-field]")) {
     const support = state.supports.find((item) => item.id === target.dataset.supportId);
     if (!support) return;
@@ -1638,6 +1976,16 @@ document.addEventListener("input", (event) => {
       support.percent = normalizeSupportPercent(target.value);
     } else {
       support.afterEvent = Math.max(0, Math.floor(numberOr(target.value, 0)));
+    }
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-ultimate-field]")) {
+    const ultimate = state.ultimates.find((item) => item.id === target.dataset.ultimateId);
+    if (!ultimate) return;
+    if (target.dataset.ultimateField === "sourceSlotId") {
+      ultimate.sourceSlotId = getValidUltimateSlotId(target.value);
     }
     refreshComputed();
     return;
@@ -1653,47 +2001,11 @@ document.addEventListener("input", (event) => {
     return;
   }
 
-  if (target.matches("[data-transition-field]")) {
+  if (target.matches("[data-transition-field]") && target.dataset.transitionField !== "mode") {
     const point = getTransitionPoints().find((item) => item.id === target.dataset.transitionId);
     if (!point) return;
     if (target.dataset.transitionField === "av") point.av = Math.max(0, numberOr(target.value, 150));
     if (target.dataset.transitionField === "afterEvent") point.afterEvent = Math.max(0, Math.floor(numberOr(target.value, 0)));
-    refreshComputed();
-  }
-});
-
-document.addEventListener("change", (event) => {
-  const target = event.target;
-
-  if (target.matches("[data-slot-character]")) {
-    const slot = getSlotById(target.dataset.slotCharacter);
-    if (!slot) return;
-    applyCharacterInput(slot, target.value, { fuzzy: true });
-    renderAll();
-    return;
-  }
-
-  if (target.matches("[data-pull-field]")) {
-    const slot = getSlotById(target.dataset.pullId);
-    if (!slot) return;
-    const field = target.dataset.pullField;
-    if (field === "enabled") slot.pullEnabled = target.checked;
-    if (field === "target") slot.pullTargetSlotId = target.value;
-    if (field === "percent") slot.pullPercent = normalizePullPercent(target.value);
-    renderAllies();
-    refreshComputed();
-    return;
-  }
-
-  if (target.matches("[data-event-pull-field]")) {
-    const key = target.dataset.eventPullKey;
-    if (!state.pullOverrides[key]) state.pullOverrides[key] = {};
-    if (target.dataset.eventPullField === "target") {
-      state.pullOverrides[key].targetId = target.value;
-    }
-    if (target.dataset.eventPullField === "percent") {
-      state.pullOverrides[key].percent = normalizePullPercent(target.value);
-    }
     refreshComputed();
     return;
   }
@@ -1830,7 +2142,8 @@ document.addEventListener("dragstart", (event) => {
   const isFormControl = event.target.closest("input, select, button, label");
   const slotRow = event.target.closest("[data-drag-slot-id]");
   const existingDance = event.target.closest("[data-drag-support-id]");
-  if (isFormControl && (slotRow || existingDance)) return;
+  const existingUltimate = event.target.closest("[data-drag-ultimate-id]");
+  if (isFormControl && (slotRow || existingDance || existingUltimate)) return;
   const newEffect = event.target.closest("[data-drag-effect]");
   const payload = slotRow
     ? { kind: "slot", id: slotRow.dataset.dragSlotId }
@@ -1838,6 +2151,8 @@ document.addEventListener("dragstart", (event) => {
       ? { kind: "effect-new", type: newEffect.dataset.dragEffect }
     : existingDance
       ? { kind: "dance-existing", id: existingDance.dataset.dragSupportId }
+      : existingUltimate
+        ? { kind: "ultimate-existing", id: existingUltimate.dataset.dragUltimateId }
       : null;
 
   if (!payload) return;
@@ -1897,9 +2212,24 @@ document.addEventListener("drop", (event) => {
     return;
   }
 
+  if (payload.kind === "effect-new" && payload.type === "ultimate") {
+    const sourceSlotId = getValidUltimateSlotId("");
+    if (!sourceSlotId) return;
+    state.ultimates.push({ id: makeId("ultimate"), afterEvent, sourceSlotId });
+    renderAll();
+    return;
+  }
+
   if (payload.kind === "dance-existing") {
     const support = state.supports.find((item) => item.id === payload.id);
     if (support) support.afterEvent = afterEvent;
+    renderAll();
+    return;
+  }
+
+  if (payload.kind === "ultimate-existing") {
+    const ultimate = state.ultimates.find((item) => item.id === payload.id);
+    if (ultimate) ultimate.afterEvent = afterEvent;
     renderAll();
     return;
   }

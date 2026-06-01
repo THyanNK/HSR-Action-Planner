@@ -447,7 +447,11 @@ h2 {
 }
 
 .ally-table {
-  min-width: 960px;
+  min-width: 1060px;
+}
+
+.ally-table.show-detail-actions {
+  min-width: 1160px;
 }
 
 .enemy-table {
@@ -464,7 +468,11 @@ h2 {
 }
 
 .ally-table .table-row {
-  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 96px 72px 86px 46px minmax(158px, 0.9fr);
+  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 54px minmax(158px, 0.9fr);
+}
+
+.ally-table.show-detail-actions .table-row {
+  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 54px 88px minmax(158px, 0.9fr);
 }
 
 .enemy-table .table-row {
@@ -638,6 +646,22 @@ select:focus {
   background: rgba(16, 21, 32, 0.28);
 }
 
+.detail-action-col,
+.detail-action-cell {
+  display: none;
+}
+
+.ally-table.show-detail-actions .detail-action-col,
+.ally-table.show-detail-actions .detail-action-cell {
+  display: block;
+}
+
+.detail-action-cell select {
+  height: 34px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
 .empty-slot {
   opacity: 0.72;
 }
@@ -722,6 +746,11 @@ select:focus {
   width: 16px;
   height: 16px;
   accent-color: var(--primary);
+}
+
+.option-placeholder {
+  min-height: 34px;
+  display: block;
 }
 
 .phase-tabs {
@@ -877,6 +906,12 @@ select:focus {
   background: rgba(255, 107, 117, 0.07);
 }
 
+.effect-card.ultimate {
+  color: var(--gold);
+  border-color: rgba(246, 198, 91, 0.52);
+  background: rgba(246, 198, 91, 0.08);
+}
+
 .support-row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 90px 96px 42px;
@@ -916,8 +951,20 @@ select:focus {
   font-weight: 900;
 }
 
+.ultimate-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #16120a;
+  background: var(--gold);
+  font-weight: 900;
+}
+
 .effect-card .support-badge,
-.effect-card .effect-badge {
+.effect-card .effect-badge,
+.effect-card .ultimate-badge {
   width: 32px;
   height: 32px;
   font-size: 20px;
@@ -1010,8 +1057,8 @@ select:focus {
 
 .timeline-row {
   display: grid;
-  grid-template-columns: 34px 34px minmax(0, 1fr) 68px;
-  gap: 9px;
+  grid-template-columns: 34px 42px minmax(0, 1fr) 68px;
+  gap: 10px;
   align-items: center;
   min-height: 42px;
   padding: 5px 8px;
@@ -1019,7 +1066,7 @@ select:focus {
 }
 
 .timeline.show-speed .timeline-row {
-  grid-template-columns: 34px 34px minmax(0, 1fr) 68px 68px;
+  grid-template-columns: 34px 42px minmax(0, 1fr) 68px 68px;
 }
 
 .timeline-row + .timeline-row {
@@ -1047,6 +1094,12 @@ select:focus {
 .timeline-row.support {
   border-left: 3px solid var(--green);
   background: rgba(126, 220, 135, 0.08);
+  cursor: grab;
+}
+
+.timeline-row.ultimate {
+  border-left: 3px solid var(--gold);
+  background: rgba(246, 198, 91, 0.08);
   cursor: grab;
 }
 
@@ -1133,6 +1186,23 @@ select:focus {
   min-width: 58px;
 }
 
+.inline-action-type {
+  display: inline-grid;
+  align-items: center;
+  margin-right: 7px;
+  vertical-align: middle;
+}
+
+.inline-action-type select {
+  width: 64px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 22px 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text);
+}
+
 .inline-effect {
   display: inline-grid;
   grid-auto-flow: column;
@@ -1149,6 +1219,37 @@ select:focus {
 
 .inline-effect.push {
   color: var(--red);
+}
+
+.inline-effect.ultimate {
+  display: flex;
+  flex-wrap: wrap;
+  grid-auto-flow: unset;
+  grid-auto-columns: unset;
+  align-items: center;
+  color: var(--gold);
+}
+
+.inline-effect.automatic {
+  color: var(--gold);
+}
+
+.inline-effect.ultimate select {
+  width: auto;
+  min-width: 82px;
+  max-width: 112px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.ultimate-effect-line {
+  min-width: 150px;
+  max-width: min(420px, 100%);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .inline-effect label {
@@ -1235,13 +1336,13 @@ select:focus {
 }
 
 .timeline.phase-columns .timeline-row {
-  grid-template-columns: 30px 30px minmax(0, 1fr) 58px;
-  gap: 7px;
+  grid-template-columns: 30px 42px minmax(0, 1fr) 58px;
+  gap: 9px;
   padding-inline: 6px;
 }
 
 .timeline.phase-columns.show-speed .timeline-row {
-  grid-template-columns: 30px 30px minmax(0, 1fr) 58px 54px;
+  grid-template-columns: 30px 42px minmax(0, 1fr) 58px 54px;
 }
 
 .timeline-row.enemy .timeline-av,
@@ -1257,6 +1358,11 @@ select:focus {
 .timeline-row.support .timeline-av,
 .timeline-row.support .timeline-title {
   color: var(--green);
+}
+
+.timeline-row.ultimate .timeline-av,
+.timeline-row.ultimate .timeline-title {
+  color: var(--gold);
 }
 
 .timeline-row.phase .timeline-av,

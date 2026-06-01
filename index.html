@@ -78,10 +78,12 @@
                     <span>角色</span>
                     <span>面板</span>
                     <span>百分比</span>
-                    <span>固定</span>
                     <span>最终</span>
                     <span>翁瓦克</span>
                     <span>拉条</span>
+                    <span>风套</span>
+                    <span>舞舞舞</span>
+                    <span class="detail-action-col">默认行动</span>
                     <span>默认目标 / 比例</span>
                   </div>
                   <div id="allyControls"></div>
@@ -149,10 +151,13 @@
                   <h2>行动轴</h2>
                   <span id="axisMeta" class="panel-meta"></span>
                 </div>
-                <label class="switch">
-                  <input id="showTimelineSpeed" type="checkbox" />
-                  <span>速度</span>
-                </label>
+                <div class="panel-actions">
+                  <button id="toggleDetailedActions" class="icon-text-button" type="button">详细行动</button>
+                  <label class="switch">
+                    <input id="showTimelineSpeed" type="checkbox" />
+                    <span>速度</span>
+                  </label>
+                </div>
               </div>
               <div id="timeline" class="timeline"></div>
             </section>
@@ -165,6 +170,11 @@
                   <span class="support-badge">舞</span>
                   <strong>舞舞舞</strong>
                   <span>全队拉条 24%</span>
+                </div>
+                <div class="effect-card ultimate" draggable="true" data-drag-effect="ultimate" title="拖入行动轴">
+                  <span class="ultimate-badge">大</span>
+                  <strong>大招</strong>
+                  <span>选择角色开大</span>
                 </div>
                 <div class="effect-card pull" draggable="true" data-drag-effect="pull" title="拖到角色或敌人行动上">
                   <span class="effect-badge">拉</span>
@@ -218,7 +228,7 @@
 
           <section class="tutorial-section">
             <h3>1. 设置我方角色和敌人</h3>
-            <p>在 “我方站位与速度” 中输入角色名或从候选里选择角色，填写面板速度、百分比加速和固定加速，最终速度会自动计算。</p>
+              <p>在 “我方站位与速度” 中输入角色名或从候选里选择角色，填写面板速度和百分比加速，最终速度会自动计算。</p>
             <p>在 “敌人行动” 里填写敌人名称与速度，点击 “+ 敌人” 可以增加敌人，敌人在行动轴中会用红色显示。</p>
           </section>
 
@@ -229,14 +239,16 @@
           </section>
 
           <section class="tutorial-section">
-            <h3>3. 特殊设置：翁瓦克、拉条和阿哈</h3>
+            <h3>3. 特殊设置：翁瓦克、拉条、风套和阿哈</h3>
             <p>开启角色行里的 “翁瓦克” 后，第一面首动会提前 40%。</p>
             <p>开启 “拉条” 后，该角色会拥有拉条队友的能力，可以选择默认目标和比例，也可以在行动轴中调整。</p>
+            <p>开启 “风套” 后，非自身回合开大时会让该角色下一次行动提前 25%；同谐角色还可以开启开大后自动触发舞舞舞。</p>
             <p>队伍里有欢愉命途角色时，阿哈时刻会自动显示并加入行动轴。</p>
           </section>
 
           <section class="tutorial-section">
-            <h3>4. 舞舞舞、推拉条</h3>
+            <h3>4. 大招、舞舞舞、推拉条</h3>
+            <p>开启 “详细行动” 后，行动轴中每次我方行动都可以标记为普攻或战技；右侧 “大招” 插件可以拖入行动轴，并选择开大的角色。</p>
             <p>把右侧 “舞舞舞” 拖到行动轴某一行，可以在该行动后触发全队拉条。</p>
             <p>把 “拉条” 或 “推条” 拖到角色或敌人行动上，可以调整那一次行动；数值可直接在行动轴行内修改。</p>
           </section>
@@ -256,4 +268,3 @@
     <script src="./app.js?v=20260530-3"></script>
   </body>
 </html>
-

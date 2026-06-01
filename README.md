@@ -74,7 +74,7 @@ A browser-based Honkai: Star Rail action value planner for arranging ally, enemy
 - `行动位置`：在当前面第 N 个行动后转面。
 - `分列`：把转面后的行动轴放到原行动轴右侧，按面分列显示。
 
-转面后角色、敌人和阿哈都会重新从当前面的 `0 AV` 开始计算。
+转面后角色和敌人会重新从当前面的 `0 AV` 开始计算；阿哈时刻保留上一面的跑条进度，只按剩余行动值进入下一面。
 
 ### 7. 行动轴显示
 
