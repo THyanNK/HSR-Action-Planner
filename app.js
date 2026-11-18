@@ -2,6 +2,14 @@ const assetBase = "./assets/other";
 const characters = Array.isArray(window.HSR_CHARACTERS) ? window.HSR_CHARACTERS : [];
 const characterById = new Map(characters.map((character) => [character.id, character]));
 const coeffs = [0.2, 0.1, 0.05, 0.02];
+const ahaCharacterId = "char-1511";
+const ahaBaseSpeeds = { none: 80, present: 94, special: 106 };
+// 行迹：战斗第一动自拉条（百分比），与翁瓦克同时生效时按加法叠加，上限 100%
+const firstActionTraces = {
+  "char-1511": 30,
+  "char-8007": 30,
+  "char-1414": 40,
+};
 const slotCount = 4;
 const stateKey = "hsr-axis-planner-v2";
 const legacyStateKey = "hsr-axis-planner-v1";
@@ -20,17 +28,26 @@ const actionTypeLabels = {
 };
 
 const legacyCharacterMap = {
-  sparkle: "char-1502",
-  yaoguang: "char-1501",
-  silver999: "char-1504",
+  sparkle: "char-1501",
+  yaoguang: "char-1502",
+  silver999: "char-1506",
   feiying: "char-1505",
   trailblazer: "char-8009",
-  "special-yaoguang": "char-1501",
-  "special-huohua": "char-1502",
-  "special-silver999": "char-1504",
+  "special-huohua": "char-1501",
+  "special-yaoguang": "char-1502",
+  "special-silver999": "char-1506",
   "special-feiying": "char-1505",
   "special-trailblazer-elation": "char-8009",
+  "char-2212": "char-1212",
+  "char-2205": "char-1205",
+  "char-2005": "char-1005",
+  "char-2006": "char-1006",
 };
+
+const elementArtBase = "./assets/element";
+const pathArtBase = "./assets/path";
+const pickerState = { slotId: "", query: "", path: "", element: "" };
+let pickerReturnFocus = null;
 
 const state = loadState();
 let activePresetId = "";
@@ -42,7 +59,7 @@ function getDefaultState() {
     slots: [
       createSlot("slot-1", "char-1505"),
       createSlot("slot-2", "char-8009"),
-      createSlot("slot-3", "char-1502"),
+      createSlot("slot-3", "char-1501"),
       createSlot("slot-4", "char-1403"),
     ],
     enemySets: {
@@ -52,6 +69,7 @@ function getDefaultState() {
     activeEnemyPhase: 1,
     supports: [],
     ultimates: [],
+    extras: [],
     actionAdjustments: [],
     pullOverrides: {},
     actionTypeOverrides: {},
@@ -62,6 +80,8 @@ function getDefaultState() {
     },
     limit: 300,
     showAha: true,
+    ahaPresent: false,
+    ahaSpecial: false,
     showTimelineSpeed: false,
     showDetailedActions: false,
   };
@@ -132,11 +152,14 @@ function normalizeState(source) {
   next.activeEnemyPhase = Math.max(1, Math.floor(numberOr(source?.activeEnemyPhase, 1)));
   next.supports = Array.isArray(source?.supports) ? source.supports : [];
   next.ultimates = Array.isArray(source?.ultimates) ? source.ultimates : [];
+  next.extras = Array.isArray(source?.extras) ? source.extras : [];
   next.actionAdjustments = Array.isArray(source?.actionAdjustments) ? source.actionAdjustments : [];
   next.pullOverrides = source?.pullOverrides && typeof source.pullOverrides === "object" ? source.pullOverrides : {};
   next.actionTypeOverrides = normalizeActionTypeOverrides(source?.actionTypeOverrides || source?.actionTypes);
   next.limit = [150, 300, 600].includes(Number(source?.limit)) ? Number(source.limit) : 300;
   next.showAha = source?.showAha !== false;
+  next.ahaPresent = source?.ahaPresent === true;
+  next.ahaSpecial = source?.ahaSpecial === true;
   next.showTimelineSpeed = source?.showTimelineSpeed === true;
   next.showDetailedActions = source?.showDetailedActions === true;
   next.supports = next.supports.map((support) => ({
@@ -146,6 +169,7 @@ function normalizeState(source) {
     percent: normalizeSupportPercent(support.percent),
   }));
   next.ultimates = next.ultimates.map((ultimate) => normalizeUltimate(ultimate, next)).filter((ultimate) => ultimate.sourceSlotId);
+  next.extras = next.extras.map((extra) => normalizeExtra(extra, next)).filter((extra) => extra.slotId);
   next.actionAdjustments = next.actionAdjustments
     .map((adjustment) => ({
       id: adjustment.id || makeId("effect"),
@@ -175,6 +199,15 @@ function normalizeUltimate(source, targetState = state) {
     id: raw.id || makeId("ultimate"),
     afterEvent: Math.max(0, Math.floor(numberOr(raw.afterEvent, 0))),
     sourceSlotId: getValidUltimateSlotId(raw.sourceSlotId || raw.slotId, targetState),
+  };
+}
+
+function normalizeExtra(source, targetState = state) {
+  const raw = source && typeof source === "object" ? source : {};
+  return {
+    id: raw.id || makeId("extra"),
+    afterEvent: Math.max(0, Math.floor(numberOr(raw.afterEvent, 0))),
+    slotId: getValidExtraSlotId(raw.slotId || raw.sourceSlotId, targetState),
   };
 }
 
@@ -596,6 +629,19 @@ function ensureUltimateSource(ultimate, targetState = state) {
   return sourceSlotId;
 }
 
+function getValidExtraSlotId(slotId, targetState = state) {
+  const slots = targetState.slots || [];
+  if (slotId && slots.some((slot) => slot.id === slotId && getAlly(slot, slots.indexOf(slot)))) return slotId;
+  const fallback = slots.find((slot, index) => getAlly(slot, index));
+  return fallback?.id || "";
+}
+
+function ensureExtraSlot(extra, targetState = state) {
+  const slotId = getValidExtraSlotId(extra.slotId, targetState);
+  extra.slotId = slotId;
+  return slotId;
+}
+
 function isHarmonyCharacter(character) {
   return Boolean(character && (character.path === "Harmony" || character.pathName === "同谐"));
 }
@@ -693,6 +739,7 @@ function getAlly(slot, index = 0) {
     character,
     ahaEligible: isAhaEligible(character),
     vonwacq: Boolean(slot.vonwacq),
+    tracePull: firstActionTraces[character?.id] || 0,
     pullEnabled: Boolean(slot.pullEnabled),
     pullTargetSlotId: slot.pullTargetSlotId,
     pullPercent: normalizePullPercent(slot.pullPercent),
@@ -820,6 +867,216 @@ function renderCharacterOptions() {
   list.innerHTML = options.join("");
 }
 
+function getPickerFacets(key) {
+  const seen = new Set();
+  const facets = [];
+  for (const character of characters) {
+    const value = key === "path" ? character.path : character.element;
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    facets.push({
+      value,
+      label: key === "path" ? character.pathName || value : character.elementName || value,
+      icon:
+        key === "path"
+          ? `${pathArtBase}/${character.pathKey || ""}.webp`
+          : `${elementArtBase}/${character.elementKey || ""}.webp`,
+    });
+  }
+  return facets;
+}
+
+function matchesPickerQuery(character, query) {
+  if (!query) return true;
+  const haystack = [character.name, ...(character.aliases || []), character.elementName, character.pathName]
+    .filter(Boolean)
+    .map((entry) => normalizeSearch(entry));
+  return haystack.some((entry) => entry.includes(query));
+}
+
+function renderPickerFilters() {
+  const wrap = document.querySelector("#characterFilters");
+  if (!wrap) return;
+
+  const groups = [
+    { key: "path", label: "命途" },
+    { key: "element", label: "属性" },
+  ];
+
+  wrap.innerHTML = groups
+    .map((group) => {
+      const active = pickerState[group.key];
+      const chips = getPickerFacets(group.key)
+        .map(
+          (facet) => `
+            <button class="picker-chip ${active === facet.value ? "active" : ""}" type="button"
+              data-picker-filter="${group.key}" data-picker-value="${escapeAttr(facet.value)}">
+              <img src="${facet.icon}" alt="" />${escapeHtml(facet.label)}
+            </button>`,
+        )
+        .join("");
+      return `
+        <div class="picker-filter-row">
+          <span class="picker-filter-label">${group.label}</span>
+          <div class="picker-chips">
+            <button class="picker-chip ${active ? "" : "active"}" type="button" data-picker-filter="${group.key}" data-picker-value="">全部</button>
+            ${chips}
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
+function renderCharacterPickerGrid() {
+  const grid = document.querySelector("#characterGrid");
+  if (!grid) return;
+
+  const slot = getSlotById(pickerState.slotId);
+  const query = normalizeSearch(pickerState.query);
+  const usedIds = new Set(
+    state.slots
+      .filter((item) => item.id !== pickerState.slotId)
+      .map((item) => item.characterId)
+      .filter(Boolean),
+  );
+
+  const list = characters.filter(
+    (character) =>
+      (!pickerState.path || character.path === pickerState.path) &&
+      (!pickerState.element || character.element === pickerState.element) &&
+      matchesPickerQuery(character, query),
+  );
+
+  grid.innerHTML = list.length
+    ? list
+        .map((character) => {
+          const current = slot?.characterId === character.id;
+          const used = usedIds.has(character.id);
+          const stars = "★".repeat(Math.max(0, Number(character.rarity) || 0));
+          return `
+            <button class="character-card${current ? " is-current" : ""}${used ? " is-used" : ""}" type="button"
+              data-pick-character="${character.id}" role="option" aria-selected="${current}"
+              title="${escapeAttr(`${character.name} · ${character.elementName || ""} · ${character.pathName || ""} · 基础速度 ${formatNumber(character.baseSpeed, 0)}`)}">
+              <span class="character-card-art"><img src="${character.art || character.icon}" alt="" loading="lazy" /></span>
+              <span class="character-card-name">${escapeHtml(character.name)}</span>
+              <span class="character-card-meta">
+                <span class="character-card-stars">${stars}</span>
+                <img class="character-card-icon" src="${elementArtBase}/${character.elementKey || ""}.webp" alt="${escapeAttr(character.elementName || "")}" />
+                <img class="character-card-icon" src="${pathArtBase}/${character.pathKey || ""}.webp" alt="${escapeAttr(character.pathName || "")}" />
+                <span class="character-card-speed">${formatNumber(character.baseSpeed, 0)}</span>
+              </span>
+            </button>`;
+        })
+        .join("")
+    : `<p class="picker-empty">没有匹配的角色，换个关键词或清空筛选试试。</p>`;
+
+  const meta = document.querySelector("#characterPickerMeta");
+  if (meta) {
+    const position = slot ? state.slots.indexOf(slot) + 1 : 0;
+    const lead = position ? `第 ${position} 位` : "选择角色";
+    const count =
+      list.length === characters.length
+        ? `共 ${characters.length} 名`
+        : `筛选出 ${list.length} / ${characters.length} 名`;
+    meta.textContent = `${lead} · ${count}`;
+  }
+}
+
+function openCharacterPicker(slotId) {
+  const modal = document.querySelector("#characterPicker");
+  if (!modal || !getSlotById(slotId)) return;
+
+  pickerState.slotId = slotId;
+  pickerState.query = "";
+  pickerState.path = "";
+  pickerState.element = "";
+  const search = document.querySelector("#characterSearch");
+  if (search) search.value = "";
+
+  pickerReturnFocus = document.activeElement;
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  renderPickerFilters();
+  renderCharacterPickerGrid();
+  search?.focus({ preventScroll: true });
+  search?.select?.();
+}
+
+function closeCharacterPicker() {
+  const modal = document.querySelector("#characterPicker");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  pickerState.slotId = "";
+  if (pickerReturnFocus && document.contains(pickerReturnFocus)) {
+    pickerReturnFocus.focus({ preventScroll: true });
+  }
+  pickerReturnFocus = null;
+}
+
+function applyPickerCharacter(characterId) {
+  const slot = getSlotById(pickerState.slotId);
+  if (!slot) return;
+  const character = getCharacter(characterId);
+  slot.characterId = character ? character.id : "";
+  slot.customName = "";
+  if (character) slot.base = character.baseSpeed;
+  closeCharacterPicker();
+  renderAll();
+}
+
+function clearPickerSlot() {
+  const slot = getSlotById(pickerState.slotId);
+  if (!slot) return;
+  slot.characterId = "";
+  slot.customName = "";
+  closeCharacterPicker();
+  renderAll();
+}
+
+function initCharacterPicker() {
+  const modal = document.querySelector("#characterPicker");
+  if (!modal) return;
+
+  const search = modal.querySelector("#characterSearch");
+
+  search?.addEventListener("input", () => {
+    pickerState.query = search.value;
+    renderCharacterPickerGrid();
+  });
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closeCharacterPicker();
+      return;
+    }
+    if (event.target.closest("[data-picker-close]")) {
+      closeCharacterPicker();
+      return;
+    }
+    if (event.target.closest("[data-picker-clear]")) {
+      clearPickerSlot();
+      return;
+    }
+    const filter = event.target.closest("[data-picker-filter]");
+    if (filter) {
+      pickerState[filter.dataset.pickerFilter] = filter.dataset.pickerValue || "";
+      renderPickerFilters();
+      renderCharacterPickerGrid();
+      return;
+    }
+    const card = event.target.closest("[data-pick-character]");
+    if (card) applyPickerCharacter(card.dataset.pickCharacter);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || modal.hidden) return;
+    closeCharacterPicker();
+  });
+}
+
 function renderAllies() {
   const wrap = document.querySelector("#allyControls");
   wrap?.closest(".ally-table")?.classList.toggle("show-detail-actions", state.showDetailedActions);
@@ -834,9 +1091,14 @@ function renderAllies() {
       const targetId = ally ? ensurePullTarget(ally.id) : "";
       const showPullTarget = Boolean(ally?.pullEnabled && !pullDisabled);
       const targetOptions = candidates.map((target) => `<option value="${target.id}" ${target.id === targetId ? "selected" : ""}>${escapeHtml(target.name)}</option>`).join("");
-      const avatar = ally?.icon
+      const avatarArt = ally?.icon
         ? `<img class="avatar" src="${ally.icon}" alt="" />`
         : `<span class="avatar-fallback">${escapeHtml((ally?.name || String(index + 1)).slice(-1))}</span>`;
+      const avatar = `
+        <button class="avatar-button" type="button" data-open-picker="${slot.id}" title="从立绘选择角色" aria-label="从角色图鉴选择角色">
+          ${avatarArt}
+          <span class="avatar-plus" aria-hidden="true">+</span>
+        </button>`;
       const danceControl = ally?.isHarmony
         ? `<label class="mini-check" title="开大后自动紧跟舞舞舞">
             <input type="checkbox" ${ally.danceOnUltimate ? "checked" : ""} data-slot-toggle="danceOnUltimate" data-slot-id="${slot.id}" />
@@ -997,6 +1259,19 @@ function renderSupports() {
     .join("");
 }
 
+function teamHasAha() {
+  return getSelectedAllies().some((ally) => ally.characterId === ahaCharacterId);
+}
+
+function hasAhaPresent() {
+  return teamHasAha() || state.ahaPresent === true;
+}
+
+function getAhaBaseSpeed() {
+  if (!hasAhaPresent()) return ahaBaseSpeeds.none;
+  return state.ahaSpecial === true ? ahaBaseSpeeds.special : ahaBaseSpeeds.present;
+}
+
 function computeAha() {
   const eligible = getSelectedAllies()
     .filter((ally) => ally.ahaEligible)
@@ -1009,17 +1284,51 @@ function computeAha() {
     contribution: ally.speed * coeffs[index],
   }));
 
-  const speed = 80 + parts.reduce((sum, part) => sum + part.contribution, 0);
-  return { speed, parts };
+  const base = getAhaBaseSpeed();
+  const speed = base + parts.reduce((sum, part) => sum + part.contribution, 0);
+  return { speed, parts, base };
 }
 
 function renderAha() {
   const aha = computeAha();
+  if (!hasAhaPresent()) state.ahaSpecial = false;
   const panel = document.querySelector(".aha-panel");
   if (panel) panel.hidden = aha.parts.length === 0;
   document.querySelector("#ahaSpeed").textContent = formatNumber(aha.speed, 1);
+
+  const locked = teamHasAha();
+  const present = document.querySelector("#ahaPresent");
+  if (present) {
+    present.checked = hasAhaPresent();
+    present.disabled = locked;
+    present.closest(".aha-check")?.classList.toggle("is-locked", locked);
+    present.closest(".aha-check")?.setAttribute(
+      "title",
+      locked ? "队伍里有阿哈，自动勾选且不可取消" : "阿哈在场时，基础速度按阿哈的 94 计算",
+    );
+  }
+
+  const specialWrap = document.querySelector("#ahaSpecialWrap");
+  if (specialWrap) specialWrap.hidden = !hasAhaPresent();
+
+  const special = document.querySelector("#ahaSpecial");
+  if (special) {
+    special.checked = state.ahaSpecial === true;
+    special.disabled = !hasAhaPresent();
+  }
+
+  const baseLine = `
+    <div class="aha-line aha-line-base">
+      <span>基础</span>
+      <strong>阿哈</strong>
+      <span>${formatNumber(aha.base, 0)}</span>
+      <span>—</span>
+      <span>+${formatNumber(aha.base, 1)}</span>
+    </div>`;
+
   document.querySelector("#ahaDetail").innerHTML = aha.parts.length
-    ? aha.parts
+    ? baseLine +
+      aha.parts
         .map(
           (part, index) => `
           <div class="aha-line">
@@ -1035,6 +1344,22 @@ function renderAha() {
     : `<div class="empty-state">当前没有计入阿哈公式的角色</div>`;
 }
 
+function initAhaOptions() {
+  const present = document.querySelector("#ahaPresent");
+  const special = document.querySelector("#ahaSpecial");
+  if (!present && !special) return;
+
+  const sync = () => {
+    if (present && !present.disabled) state.ahaPresent = present.checked;
+    if (special) state.ahaSpecial = special.checked;
+    if (!hasAhaPresent()) state.ahaSpecial = false;
+    refreshComputed();
+  };
+
+  present?.addEventListener("change", sync);
+  special?.addEventListener("change", sync);
+}
+
 function actorPriority(actor) {
   if (actor.type === "ally") return actor.position;
   if (actor.type === "aha") return 60;
@@ -1045,12 +1370,15 @@ function actorPriority(actor) {
 function makeActors({ phase, startAt, useVonwacq, carryoverAha = null }) {
   const allies = getSelectedAllies().map((ally) => {
     const period = 10000 / ally.speed;
+    const vonwacqAdvance = useVonwacq && ally.vonwacq ? 0.4 : 0;
+    const traceAdvance = useVonwacq && ally.tracePull ? ally.tracePull / 100 : 0;
+    const advance = Math.min(1, vonwacqAdvance + traceAdvance);
     return {
       ...ally,
       uid: `ally:${ally.id}`,
       type: "ally",
       period,
-      nextAt: startAt + period * (useVonwacq && ally.vonwacq ? 0.6 : 1),
+      nextAt: startAt + period * (1 - advance),
       cycle: 1,
     };
   });
@@ -1074,6 +1402,8 @@ function makeActors({ phase, startAt, useVonwacq, carryoverAha = null }) {
   if (aha.parts.length && aha.speed > 0) {
     const period = 10000 / aha.speed;
     const keepAhaProgress = carryoverAha?.type === "aha";
+    // 队伍里有阿哈时，进战立刻触发一次阿哈时刻
+    const triggerAtBattleStart = !keepAhaProgress && useVonwacq && teamHasAha();
     actors.push({
       uid: "aha",
       id: "aha",
@@ -1082,7 +1412,11 @@ function makeActors({ phase, startAt, useVonwacq, carryoverAha = null }) {
       icon: `${assetBase}/aha.png`,
       speed: aha.speed,
       period,
-      nextAt: keepAhaProgress ? Math.max(startAt, numberOr(carryoverAha.nextAt, startAt + period)) : startAt + period,
+      nextAt: keepAhaProgress
+        ? Math.max(startAt, numberOr(carryoverAha.nextAt, startAt + period))
+        : triggerAtBattleStart
+          ? startAt
+          : startAt + period,
       cycle: keepAhaProgress ? Math.max(1, Math.floor(numberOr(carryoverAha.cycle, 1))) : 1,
       position: 1,
     });
@@ -1121,6 +1455,7 @@ function buildTimeline() {
   const timeline = [];
   const appliedSupportIds = new Set();
   const appliedUltimateIds = new Set();
+  const appliedExtraIds = new Set();
   const appliedActionAdjustmentIds = new Set();
   const limit = state.limit;
   const transition = getTransitionConfig();
@@ -1205,6 +1540,14 @@ function buildTimeline() {
       effects.push("风套提前 25%");
     }
 
+    if (sourceActor.characterId === ahaCharacterId) {
+      const ahaActor = actors.find((actor) => actor.type === "aha");
+      if (ahaActor) {
+        ahaActor.nextAt = Math.max(currentAv, ahaActor.nextAt - ahaActor.period * 0.2);
+        effects.push("阿哈时刻提前 20%");
+      }
+    }
+
     if (sourceActor.danceOnUltimate) {
       pushAutoDance(sourceActor.name, currentAv, afterEvent);
       effects.push("舞舞舞 24%");
@@ -1277,9 +1620,44 @@ function buildTimeline() {
     }
   };
 
+  const applyExtras = (afterEvent, currentAv) => {
+    const normalizedAfterEvent = Math.max(0, Math.floor(numberOr(afterEvent, 0)));
+    const matches = state.extras
+      .filter((extra) => Math.max(0, Math.floor(numberOr(extra.afterEvent, 0))) === normalizedAfterEvent)
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const extra of matches) {
+      if (appliedExtraIds.has(extra.id) || phaseAv(currentAv) - limit > 1e-8) continue;
+      const slotId = ensureExtraSlot(extra);
+      if (!slotId) continue;
+      const slot = state.slots.find((item) => item.id === slotId);
+      const index = state.slots.indexOf(slot);
+      const ally = slot ? getAlly(slot, index) : null;
+      if (!ally) continue;
+      appliedExtraIds.add(extra.id);
+      pushTimelineEvent({
+        type: "extra",
+        extraId: extra.id,
+        slotId,
+        id: slotId,
+        name: `${ally.name} 额外回合`,
+        icon: ally.icon,
+        speed: ally.speed,
+        av: phaseAv(currentAv),
+        absoluteAv: currentAv,
+        detail: "额外回合",
+        afterEvent: normalizedAfterEvent,
+        naturalIndex: normalizedAfterEvent,
+        phase,
+      });
+      applyEventTransition(currentAv);
+    }
+  };
+
   const applyPostActionEffects = (afterEvent, currentAv, sourceEvent) => {
     applyUltimates(afterEvent, currentAv, sourceEvent);
     applySupports(afterEvent, currentAv);
+    applyExtras(afterEvent, currentAv);
   };
 
   const doTransition = (av) => {
@@ -1363,6 +1741,7 @@ function buildTimeline() {
       cycle: actor.cycle,
       position: actor.position,
       vonwacq: actor.vonwacq,
+      tracePull: actor.tracePull,
       naturalIndex: eventNaturalIndex,
       phaseNaturalIndex: eventPhaseNaturalIndex,
       phase,
@@ -1436,6 +1815,25 @@ function renderUltimateEventControl(event) {
   `;
 }
 
+function renderExtraEventControl(event) {
+  const options = state.slots
+    .map((slot, index) => {
+      const ally = getAlly(slot, index);
+      if (!ally) return "";
+      return `<option value="${slot.id}" ${slot.id === event.slotId ? "selected" : ""}>${escapeHtml(ally.name)}</option>`;
+    })
+    .join("");
+  return `
+    <span class="inline-effect extra">
+      <span>额外回合</span>
+      <select title="选择行动角色" data-extra-field="slotId" data-extra-id="${event.extraId}">
+        ${options}
+      </select>
+      <button class="inline-delete" type="button" title="删除" data-delete-extra="${event.extraId}">×</button>
+    </span>
+  `;
+}
+
 function renderSupportEventControl(event) {
   if (event.automatic) {
     return `
@@ -1477,12 +1875,16 @@ function renderActionAdjustmentControls(event) {
 function renderTimelineSub(event) {
   if (event.type === "support") return renderSupportEventControl(event);
   if (event.type === "ultimate") return renderUltimateEventControl(event);
+  if (event.type === "extra") return renderExtraEventControl(event);
   if (event.type === "phase") return escapeHtml(event.detail);
   if (event.type === "enemy") return `${phaseName(event.phase)}敌人 · 第 ${event.cycle} 动${renderActionAdjustmentControls(event)}`;
   if (event.type === "aha") return `第 ${event.cycle} 次`;
   if (event.type === "ally") {
     const pieces = [`第 ${event.cycle} 动`];
-    if (event.vonwacq && event.cycle === 1 && event.phase === 1) pieces.push("翁瓦克");
+    if (event.cycle === 1 && event.phase === 1) {
+      if (event.vonwacq) pieces.push("翁瓦克");
+      if (event.tracePull) pieces.push(`行迹 ${event.tracePull}%`);
+    }
     const effects = event.ultimateEffects?.length ? ` · ${event.ultimateEffects.join(" · ")}` : "";
     const actionTypeControl = state.showDetailedActions ? renderActionTypeControl(event) : "";
     return `${actionTypeControl}${pieces.map(escapeHtml).join(" · ")}${escapeHtml(effects)}${renderEventPullControl(event)}${renderActionAdjustmentControls(event)}`;
@@ -1549,13 +1951,15 @@ function renderTimelineRow(event, orderByPhase) {
         })();
   const avatar = event.icon
     ? `<img class="avatar" src="${event.icon}" alt="" />`
-    : `<span class="avatar-fallback">${event.type === "enemy" ? "敌" : event.type === "support" ? "舞" : event.type === "ultimate" ? "大" : event.type === "phase" ? "转" : event.name.slice(-1)}</span>`;
+    : `<span class="avatar-fallback">${event.type === "enemy" ? "敌" : event.type === "support" ? "舞" : event.type === "ultimate" ? "大" : event.type === "extra" ? "额" : event.type === "phase" ? "转" : event.name.slice(-1)}</span>`;
   const dragAttrs =
     event.type === "support" && !event.automatic
       ? `draggable="true" data-drag-support-id="${event.supportId}"`
       : event.type === "ultimate"
         ? `draggable="true" data-drag-ultimate-id="${event.ultimateId}"`
-        : "";
+        : event.type === "extra"
+          ? `draggable="true" data-drag-extra-id="${event.extraId}"`
+          : "";
   const eventAttrs = event.eventKey ? `data-event-key="${escapeAttr(event.eventKey)}"` : "";
   const adjustableAttrs = event.type === "ally" || event.type === "enemy" ? `data-adjustable-event="true"` : "";
   const phaseClass = phase > 1 ? "after-transition" : "before-transition";
@@ -1796,6 +2200,12 @@ function escapeAttr(value) {
 }
 
 document.addEventListener("click", (event) => {
+  const pickerTrigger = event.target.closest("[data-open-picker]");
+  if (pickerTrigger) {
+    openCharacterPicker(pickerTrigger.dataset.openPicker);
+    return;
+  }
+
   const vonwacqButton = event.target.closest("[data-vonwacq-id]");
   if (vonwacqButton) {
     const slot = getSlotById(vonwacqButton.dataset.vonwacqId);
@@ -1824,6 +2234,13 @@ document.addEventListener("click", (event) => {
   const deleteUltimate = event.target.closest("[data-delete-ultimate]");
   if (deleteUltimate) {
     state.ultimates = state.ultimates.filter((ultimate) => ultimate.id !== deleteUltimate.dataset.deleteUltimate);
+    renderAll();
+    return;
+  }
+
+  const deleteExtra = event.target.closest("[data-delete-extra]");
+  if (deleteExtra) {
+    state.extras = state.extras.filter((extra) => extra.id !== deleteExtra.dataset.deleteExtra);
     renderAll();
     return;
   }
@@ -1991,6 +2408,16 @@ document.addEventListener("change", (event) => {
     return;
   }
 
+  if (target.matches("[data-extra-field]")) {
+    const extra = state.extras.find((item) => item.id === target.dataset.extraId);
+    if (!extra) return;
+    if (target.dataset.extraField === "slotId") {
+      extra.slotId = getValidExtraSlotId(target.value);
+    }
+    refreshComputed();
+    return;
+  }
+
   if (target.matches("[data-action-effect-field]")) {
     const adjustment = state.actionAdjustments.find((item) => item.id === target.dataset.actionEffectId);
     if (!adjustment) return;
@@ -2143,7 +2570,8 @@ document.addEventListener("dragstart", (event) => {
   const slotRow = event.target.closest("[data-drag-slot-id]");
   const existingDance = event.target.closest("[data-drag-support-id]");
   const existingUltimate = event.target.closest("[data-drag-ultimate-id]");
-  if (isFormControl && (slotRow || existingDance || existingUltimate)) return;
+  const existingExtra = event.target.closest("[data-drag-extra-id]");
+  if (isFormControl && (slotRow || existingDance || existingUltimate || existingExtra)) return;
   const newEffect = event.target.closest("[data-drag-effect]");
   const payload = slotRow
     ? { kind: "slot", id: slotRow.dataset.dragSlotId }
@@ -2153,6 +2581,8 @@ document.addEventListener("dragstart", (event) => {
       ? { kind: "dance-existing", id: existingDance.dataset.dragSupportId }
       : existingUltimate
         ? { kind: "ultimate-existing", id: existingUltimate.dataset.dragUltimateId }
+      : existingExtra
+        ? { kind: "extra-existing", id: existingExtra.dataset.dragExtraId }
       : null;
 
   if (!payload) return;
@@ -2234,6 +2664,21 @@ document.addEventListener("drop", (event) => {
     return;
   }
 
+  if (payload.kind === "effect-new" && payload.type === "extra") {
+    const slotId = getValidExtraSlotId("");
+    if (!slotId) return;
+    state.extras.push({ id: makeId("extra"), afterEvent, slotId });
+    renderAll();
+    return;
+  }
+
+  if (payload.kind === "extra-existing") {
+    const extra = state.extras.find((item) => item.id === payload.id);
+    if (extra) extra.afterEvent = afterEvent;
+    renderAll();
+    return;
+  }
+
   if (payload.kind === "effect-new" && (payload.type === "pull" || payload.type === "push")) {
     const targetRow = event.target.closest("[data-adjustable-event][data-event-key]");
     if (!targetRow) return;
@@ -2258,3 +2703,5 @@ renderAll();
 initWorkspaceResizer();
 initSidebarToggle();
 initTutorialModal();
+initCharacterPicker();
+initAhaOptions();

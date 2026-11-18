@@ -1,11 +1,11 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>崩铁排轴</title>
     <link rel="icon" type="image/png" href="./assets/other/logo.png" />
-    <link rel="stylesheet" href="./styles.css?v=20260530-3" />
+    <link rel="stylesheet" href="./styles.css?v=20261118-3" />
   </head>
   <body>
     <div class="app-shell sidebar-collapsed">
@@ -69,7 +69,7 @@
             <section class="panel">
               <div class="panel-head">
                 <h2>我方站位与速度</h2>
-                <span class="panel-meta">输入角色名或下拉选择，同 AV 按站位</span>
+                <span class="panel-meta">点头像从立绘选择，也可直接输入角色名，同 AV 按站位</span>
               </div>
               <div class="table-wrap">
                 <div class="unit-table ally-table">
@@ -99,6 +99,16 @@
               <div class="aha-value compact-aha">
                 <span>速度</span>
                 <strong id="ahaSpeed">80</strong>
+                <div class="aha-options">
+                  <label class="aha-check" id="ahaPresentWrap" title="阿哈在场时，基础速度按阿哈的 94 计算">
+                    <input type="checkbox" id="ahaPresent" />
+                    <span>有阿哈</span>
+                  </label>
+                  <label class="aha-check" id="ahaSpecialWrap" title="哈专：基础速度改为 106" hidden>
+                    <input type="checkbox" id="ahaSpecial" />
+                    <span>哈专</span>
+                  </label>
+                </div>
               </div>
               <div id="ahaDetail" class="aha-detail"></div>
             </section>
@@ -176,6 +186,11 @@
                   <strong>大招</strong>
                   <span>选择角色开大</span>
                 </div>
+                <div class="effect-card extra" draggable="true" data-drag-effect="extra" title="拖入行动轴">
+                  <span class="extra-badge">额</span>
+                  <strong>额外回合</strong>
+                  <span>选择角色插队</span>
+                </div>
                 <div class="effect-card pull" draggable="true" data-drag-effect="pull" title="拖到角色或敌人行动上">
                   <span class="effect-badge">拉</span>
                   <strong>拉条</strong>
@@ -244,11 +259,13 @@
             <p>开启 “拉条” 后，该角色会拥有拉条队友的能力，可以选择默认目标和比例，也可以在行动轴中调整。</p>
             <p>开启 “风套” 后，非自身回合开大时会让该角色下一次行动提前 25%；同谐角色还可以开启开大后自动触发舞舞舞。</p>
             <p>队伍里有欢愉命途角色时，阿哈时刻会自动显示并加入行动轴。</p>
+            <p>队伍里有「星神★阿哈」时，进战会立刻触发一次阿哈时刻；阿哈开大还会让阿哈时刻提前 20%。</p>
           </section>
 
           <section class="tutorial-section">
-            <h3>4. 大招、舞舞舞、推拉条</h3>
+            <h3>4. 大招、额外回合、舞舞舞、推拉条</h3>
             <p>开启 “详细行动” 后，行动轴中每次我方行动都可以标记为普攻或战技；右侧 “大招” 插件可以拖入行动轴，并选择开大的角色。</p>
+            <p>把 “额外回合” 插件拖入行动轴，可以选择哪一个角色插队多行动一次；它不影响该角色原本的行动顺序。</p>
             <p>把右侧 “舞舞舞” 拖到行动轴某一行，可以在该行动后触发全队拉条。</p>
             <p>把 “拉条” 或 “推条” 拖到角色或敌人行动上，可以调整那一次行动；数值可直接在行动轴行内修改。</p>
           </section>
@@ -264,7 +281,27 @@
         <img src="./assets/other/qq_group.png" alt="QQ群 241138329 放大图" />
       </div>
     </div>
-    <script src="./character-data.js?v=20260530-2"></script>
-    <script src="./app.js?v=20260530-3"></script>
+    <div id="characterPicker" class="character-picker-modal" role="dialog" aria-modal="true" aria-labelledby="characterPickerTitle" aria-hidden="true" hidden>
+      <div class="character-picker-dialog" role="document">
+        <header class="picker-head">
+          <div class="picker-head-copy">
+            <h2 id="characterPickerTitle">角色图鉴</h2>
+            <p id="characterPickerMeta">选择角色</p>
+          </div>
+          <button class="picker-close" type="button" aria-label="关闭角色图鉴" data-picker-close>&times;</button>
+        </header>
+        <div class="picker-toolbar">
+          <input id="characterSearch" type="search" placeholder="搜索角色名 / 英文名 / 命途" autocomplete="off" spellcheck="false" />
+          <div id="characterFilters" class="picker-filters"></div>
+        </div>
+        <div id="characterGrid" class="character-grid" role="listbox" aria-label="角色列表"></div>
+        <footer class="picker-foot">
+          <span class="picker-hint">点击角色卡即替换当前站位，基础速度会自动填入。</span>
+          <button class="icon-text-button" type="button" data-picker-clear>清空该站位</button>
+        </footer>
+      </div>
+    </div>
+    <script src="./character-data.js?v=20261118-1"></script>
+    <script src="./app.js?v=20261118-4"></script>
   </body>
 </html>
