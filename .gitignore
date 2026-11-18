@@ -22,6 +22,11 @@ axis-*.png
 # Source/reference webpages are not needed by the deployed app.
 # Required images have been copied into assets/.
 参考网页/
+assets/角色 — nanoka.cc.html
+assets/角色 — nanoka.cc_files/
+
+# Scratch space for one-off data/asset pipelines
+_scratch/
 
 # OS metadata
 .DS_Store
