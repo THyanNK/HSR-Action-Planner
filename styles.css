@@ -468,11 +468,11 @@ h2 {
 }
 
 .ally-table .table-row {
-  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 54px minmax(158px, 0.9fr);
+  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 46px 54px minmax(158px, 0.9fr);
 }
 
 .ally-table.show-detail-actions .table-row {
-  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 54px 88px minmax(158px, 0.9fr);
+  grid-template-columns: 36px minmax(230px, 1.2fr) 96px 96px 72px 86px 46px 46px 46px 54px 88px minmax(158px, 0.9fr);
 }
 
 .enemy-table .table-row {
@@ -746,6 +746,11 @@ select:focus {
   width: 16px;
   height: 16px;
   accent-color: var(--primary);
+}
+
+.mini-check input:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
 }
 
 .option-placeholder {
@@ -1357,6 +1362,24 @@ select:focus {
   background: var(--surface-2);
   color: var(--muted);
   cursor: pointer;
+}
+
+.inline-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.inline-flag input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  accent-color: var(--primary);
 }
 
 .timeline-av,

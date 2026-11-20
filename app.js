@@ -3,7 +3,10 @@ const characters = Array.isArray(window.HSR_CHARACTERS) ? window.HSR_CHARACTERS 
 const characterById = new Map(characters.map((character) => [character.id, character]));
 const coeffs = [0.2, 0.1, 0.05, 0.02];
 const ahaCharacterId = "char-1511";
+const pearlCharacterId = "char-1503";
 const ahaBaseSpeeds = { none: 80, present: 94, special: 106 };
+// 信使套：开大后全队速度 +12%（只按基础速度计算），每个角色各自持续到自己下一次行动结束
+const messengerSpeedBonus = 0.12;
 // 行迹：战斗第一动自拉条（百分比），与翁瓦克同时生效时按加法叠加，上限 100%
 const firstActionTraces = {
   "char-1511": 30,
@@ -70,6 +73,7 @@ function getDefaultState() {
     supports: [],
     ultimates: [],
     extras: [],
+    pearlTargetSlotId: "",
     actionAdjustments: [],
     pullOverrides: {},
     actionTypeOverrides: {},
@@ -112,6 +116,7 @@ function createSlot(id, characterId = "", overrides = {}) {
     defaultActionType: "Q",
     windSet: false,
     danceOnUltimate: false,
+    messenger: false,
     ...overrides,
   };
 }
@@ -167,9 +172,11 @@ function normalizeState(source) {
     type: "dance",
     afterEvent: Math.max(0, Math.floor(numberOr(support.afterEvent, 0))),
     percent: normalizeSupportPercent(support.percent),
+    duringTurn: support.duringTurn === true,
   }));
   next.ultimates = next.ultimates.map((ultimate) => normalizeUltimate(ultimate, next)).filter((ultimate) => ultimate.sourceSlotId);
   next.extras = next.extras.map((extra) => normalizeExtra(extra, next)).filter((extra) => extra.slotId);
+  next.pearlTargetSlotId = typeof source?.pearlTargetSlotId === "string" ? source.pearlTargetSlotId : "";
   next.actionAdjustments = next.actionAdjustments
     .map((adjustment) => ({
       id: adjustment.id || makeId("effect"),
@@ -199,6 +206,8 @@ function normalizeUltimate(source, targetState = state) {
     id: raw.id || makeId("ultimate"),
     afterEvent: Math.max(0, Math.floor(numberOr(raw.afterEvent, 0))),
     sourceSlotId: getValidUltimateSlotId(raw.sourceSlotId || raw.slotId, targetState),
+    // 是否在上一行动角色的回合内释放：勾上则该角色不吃这次舞舞舞、信使也多留一回合
+    duringTurn: raw.duringTurn === true,
   };
 }
 
@@ -298,7 +307,9 @@ function normalizeSlot(raw, index) {
     pullPercent: normalizePullPercent(raw.pullPercent),
     defaultActionType: normalizeActionType(raw.defaultActionType || (pullEnabled ? "E" : "Q")),
     windSet: Boolean(raw.windSet),
-    danceOnUltimate: Boolean(raw.danceOnUltimate),
+    // 舞舞舞是同谐光锥，只有同谐角色能携带
+    danceOnUltimate: Boolean(raw.danceOnUltimate) && isHarmonyCharacter(character),
+    messenger: Boolean(raw.messenger),
   };
 }
 
@@ -636,6 +647,16 @@ function getValidExtraSlotId(slotId, targetState = state) {
   return fallback?.id || "";
 }
 
+function getPearlExtraSlot(targetState = state) {
+  const slots = targetState.slots || [];
+  const candidates = slots.filter((slot, index) => {
+    const ally = getAlly(slot, index);
+    return ally && ally.characterId !== pearlCharacterId;
+  });
+  const chosen = candidates.find((slot) => slot.id === targetState.pearlTargetSlotId);
+  return chosen || candidates[0] || null;
+}
+
 function ensureExtraSlot(extra, targetState = state) {
   const slotId = getValidExtraSlotId(extra.slotId, targetState);
   extra.slotId = slotId;
@@ -710,11 +731,14 @@ function applyCharacterInput(slot, value, options = {}) {
     slot.characterId = character.id;
     slot.customName = "";
     if (changed) slot.base = character.baseSpeed;
+    // 舞舞舞是同谐光锥，非同谐角色不能携带
+    if (!isHarmonyCharacter(character)) slot.danceOnUltimate = false;
     return;
   }
 
   slot.characterId = "";
   slot.customName = text;
+  slot.danceOnUltimate = false;
 }
 
 function getAlly(slot, index = 0) {
@@ -746,6 +770,7 @@ function getAlly(slot, index = 0) {
     defaultActionType: normalizeActionType(slot.defaultActionType || (slot.pullEnabled ? "E" : "Q")),
     windSet: Boolean(slot.windSet),
     danceOnUltimate: Boolean(slot.danceOnUltimate && isHarmonyCharacter(character)),
+    messenger: Boolean(slot.messenger),
     isHarmony: isHarmonyCharacter(character),
     position: index + 1,
   };
@@ -1099,11 +1124,11 @@ function renderAllies() {
           ${avatarArt}
           <span class="avatar-plus" aria-hidden="true">+</span>
         </button>`;
-      const danceControl = ally?.isHarmony
-        ? `<label class="mini-check" title="开大后自动紧跟舞舞舞">
-            <input type="checkbox" ${ally.danceOnUltimate ? "checked" : ""} data-slot-toggle="danceOnUltimate" data-slot-id="${slot.id}" />
+      const danceControl = ally
+        ? `<label class="mini-check" title="${ally.isHarmony ? "开大后自动紧跟舞舞舞" : "舞舞舞是同谐光锥，只有同谐角色能携带"}">
+            <input type="checkbox" ${ally.danceOnUltimate ? "checked" : ""} ${ally.isHarmony ? "" : "disabled"} data-slot-toggle="danceOnUltimate" data-slot-id="${slot.id}" />
           </label>`
-        : `<span class="option-placeholder"></span>`;
+        : `<label class="mini-check"><input type="checkbox" disabled /></label>`;
       const nameValue = character?.name || slot.customName || "";
       const finalSpeed = ally ? formatNumber(ally.speed, 1) : "-";
       const rowClass = ally ? "" : "empty-slot";
@@ -1129,6 +1154,9 @@ function renderAllies() {
           </label>
           <label class="mini-check" title="风套：非自身回合开大后自身下次行动提前 25%">
             <input type="checkbox" ${ally?.windSet ? "checked" : ""} ${ally ? "" : "disabled"} data-slot-toggle="windSet" data-slot-id="${slot.id}" />
+          </label>
+          <label class="mini-check" title="信使套：开大后全队速度 +12%（按基础速度计算），各自持续到自己下一次行动结束">
+            <input type="checkbox" ${ally?.messenger ? "checked" : ""} ${ally ? "" : "disabled"} data-slot-toggle="messenger" data-slot-id="${slot.id}" />
           </label>
           ${danceControl}
           <div class="detail-action-cell">
@@ -1218,12 +1246,12 @@ function renderTransition() {
             <label class="control-field">
               <span>截断方式</span>
               <select data-transition-field="mode" data-transition-id="${point.id}">
-                <option value="av" ${point.mode === "av" ? "selected" : ""}>固定 AV</option>
+                <option value="av" ${point.mode === "av" ? "selected" : ""}>固定行动值</option>
                 <option value="event" ${point.mode === "event" ? "selected" : ""}>行动位置</option>
               </select>
             </label>
             <label class="control-field" ${point.mode === "av" ? "" : "hidden"}>
-              <span>转面 AV</span>
+              <span>转面行动值</span>
               <input type="number" min="0" step="1" value="${formatNumber(point.av, 1)}" data-transition-field="av" data-transition-id="${point.id}" />
             </label>
             <label class="control-field" ${point.mode === "event" ? "" : "hidden"}>
@@ -1377,6 +1405,12 @@ function makeActors({ phase, startAt, useVonwacq, carryoverAha = null }) {
       ...ally,
       uid: `ally:${ally.id}`,
       type: "ally",
+      baseSpeed: ally.speed,
+      speedBase: ally.base,
+      speedPercentBase: ally.percentBase,
+      speedPercent: ally.percent,
+      messengerStacks: 0,
+      messengerGrace: 0,
       period,
       nextAt: startAt + period * (1 - advance),
       cycle: 1,
@@ -1502,14 +1536,73 @@ function buildTimeline() {
     }
   };
 
-  const applyDanceAdvance = (currentAv, percent) => {
+  const applyDanceAdvance = (currentAv, percent, excludeActorId = "") => {
     for (const actor of actors) {
       if (actor.type !== "ally") continue;
+      if (excludeActorId && actor.id === excludeActorId) continue;
       actor.nextAt = Math.max(currentAv, actor.nextAt - actor.period * (percent / 100));
     }
   };
 
-  const pushAutoDance = (sourceName, currentAv, afterEvent) => {
+  const refreshActorSpeed = (actor) => {
+    if (actor.type !== "ally") return;
+    const percent = actor.speedPercent + messengerSpeedBonus * 100 * actor.messengerStacks;
+    actor.speed = clampSpeed(actor.speedBase + actor.speedPercentBase * (percent / 100));
+    actor.period = 10000 / actor.speed;
+  };
+
+  // 信使套：给每个我方角色叠一层加速（+12% 基础速度），已经带层的角色只延长持续回合数
+  // turnOwner：这次开大如果发生在某角色回合内，那个角色少掉一层（buff 覆盖到下一动之后的回合）
+  const applyMessengerBuff = (currentAv, turnOwner = "") => {
+    let affected = 0;
+    for (const actor of actors) {
+      if (actor.type !== "ally") continue;
+      const firstStack = actor.messengerStacks === 0;
+      const oldPeriod = actor.period;
+      actor.messengerStacks += 1;
+      if (turnOwner && actor.id === turnOwner) actor.messengerGrace += 1;
+      refreshActorSpeed(actor);
+      if (firstStack && actor.nextAt > currentAv && oldPeriod > 0) {
+        actor.nextAt = currentAv + (actor.nextAt - currentAv) * (actor.period / oldPeriod);
+      }
+      affected += 1;
+    }
+    return affected;
+  };
+
+  const isFourElationTeam = () => {
+    const allies = getSelectedAllies();
+    return allies.length === 4 && allies.every((ally) => ally.character?.path === "Elation");
+  };
+
+  const pushAutoExtraTurn = (sourceActor, currentAv, afterEvent) => {
+    const targetSlot = getPearlExtraSlot();
+    if (!targetSlot) return null;
+    const targetActor = actors.find((actor) => actor.type === "ally" && actor.id === targetSlot.id);
+    const targetAlly = targetActor || getAlly(targetSlot, state.slots.indexOf(targetSlot));
+    if (!targetAlly) return null;
+    const event = {
+      type: "extra",
+      automatic: true,
+      pearlAuto: true,
+      slotId: targetSlot.id,
+      id: targetSlot.id,
+      name: `${targetAlly.name} 额外回合`,
+      icon: targetAlly.icon,
+      speed: targetAlly.speed,
+      av: phaseAv(currentAv),
+      absoluteAv: currentAv,
+      detail: "真珠开大 · 四名欢愉 · 额外回合",
+      afterEvent,
+      naturalIndex: afterEvent,
+      phase,
+    };
+    pushTimelineEvent(event);
+    applyEventTransition(currentAv);
+    return event;
+  };
+
+  const pushAutoDance = (sourceName, currentAv, afterEvent, turnOwner = "") => {
     if (phaseAv(currentAv) - limit > 1e-8) return;
     const percent = 24;
     pushTimelineEvent({
@@ -1524,12 +1617,14 @@ function buildTimeline() {
       percent,
       naturalIndex: afterEvent,
       phase,
+      duringTurn: Boolean(turnOwner),
+      turnOwner,
     });
-    applyDanceAdvance(currentAv, percent);
+    applyDanceAdvance(currentAv, percent, turnOwner);
     applyEventTransition(currentAv);
   };
 
-  const applyUltimateEffects = (sourceSlotId, currentAv, sourceEvent, afterEvent) => {
+  const applyUltimateEffects = (sourceSlotId, currentAv, sourceEvent, afterEvent, turnOwner = "") => {
     const sourceActor = actors.find((actor) => actor.type === "ally" && actor.id === sourceSlotId);
     if (!sourceActor) return [];
     const effects = [];
@@ -1549,8 +1644,17 @@ function buildTimeline() {
     }
 
     if (sourceActor.danceOnUltimate) {
-      pushAutoDance(sourceActor.name, currentAv, afterEvent);
+      pushAutoDance(sourceActor.name, currentAv, afterEvent, turnOwner);
       effects.push("舞舞舞 24%");
+    }
+
+    if (sourceActor.messenger) {
+      const affected = applyMessengerBuff(currentAv, turnOwner);
+      if (affected) effects.push(`信使加速 ${Math.round(messengerSpeedBonus * 100)}%`);
+    }
+
+    if (sourceActor.characterId === pearlCharacterId && isFourElationTeam()) {
+      pushAutoExtraTurn(sourceActor, currentAv, afterEvent);
     }
 
     return effects;
@@ -1587,12 +1691,15 @@ function buildTimeline() {
         phase,
       };
       pushTimelineEvent(ultimateEvent);
-      ultimateEvent.ultimateEffects = applyUltimateEffects(sourceSlotId, currentAv, sourceEvent, normalizedAfterEvent);
+      const turnOwner = ultimate.duringTurn === false || sourceEvent?.type !== "ally" ? "" : sourceEvent.id;
+      ultimateEvent.duringTurn = Boolean(turnOwner);
+      ultimateEvent.turnOwner = turnOwner;
+      ultimateEvent.ultimateEffects = applyUltimateEffects(sourceSlotId, currentAv, sourceEvent, normalizedAfterEvent, turnOwner);
       applyEventTransition(currentAv);
     }
   };
 
-  const applySupports = (afterEvent, currentAv) => {
+  const applySupports = (afterEvent, currentAv, sourceEvent = null) => {
     const normalizedAfterEvent = Math.max(0, Math.floor(numberOr(afterEvent, 0)));
     const matches = state.supports
       .filter((support) => Math.max(0, Math.floor(numberOr(support.afterEvent, 0))) === normalizedAfterEvent)
@@ -1601,6 +1708,7 @@ function buildTimeline() {
     for (const support of matches) {
       if (appliedSupportIds.has(support.id) || phaseAv(currentAv) - limit > 1e-8) continue;
       appliedSupportIds.add(support.id);
+      const turnOwner = support.duringTurn === false || sourceEvent?.type !== "ally" ? "" : sourceEvent.id;
       pushTimelineEvent({
         type: "support",
         supportId: support.id,
@@ -1613,9 +1721,11 @@ function buildTimeline() {
         percent: normalizeSupportPercent(support.percent),
         naturalIndex: normalizedAfterEvent,
         phase,
+        duringTurn: Boolean(turnOwner),
+        turnOwner,
       });
 
-      applyDanceAdvance(currentAv, normalizeSupportPercent(support.percent));
+      applyDanceAdvance(currentAv, normalizeSupportPercent(support.percent), turnOwner);
       applyEventTransition(currentAv);
     }
   };
@@ -1656,7 +1766,7 @@ function buildTimeline() {
 
   const applyPostActionEffects = (afterEvent, currentAv, sourceEvent) => {
     applyUltimates(afterEvent, currentAv, sourceEvent);
-    applySupports(afterEvent, currentAv);
+    applySupports(afterEvent, currentAv, sourceEvent);
     applyExtras(afterEvent, currentAv);
   };
 
@@ -1674,7 +1784,7 @@ function buildTimeline() {
       av: 0,
       absoluteAv: av,
       sourceAv,
-      detail: `${phaseName(toPhase)}开始，上一面 AV ${formatNumber(sourceAv, 1)}`,
+      detail: `${phaseName(toPhase)}开始，上一面行动值 ${formatNumber(sourceAv, 1)}`,
       naturalIndex: naturalCount,
       phase: toPhase,
       fromPhase,
@@ -1742,6 +1852,7 @@ function buildTimeline() {
       position: actor.position,
       vonwacq: actor.vonwacq,
       tracePull: actor.tracePull,
+      messengerActive: actor.type === "ally" && actor.messengerStacks > 0,
       naturalIndex: eventNaturalIndex,
       phaseNaturalIndex: eventPhaseNaturalIndex,
       phase,
@@ -1755,6 +1866,16 @@ function buildTimeline() {
     phaseNaturalCount += 1;
     actor.cycle += 1;
     actor.nextAt = currentAv + actor.period;
+    if (actor.type === "ally" && actor.messengerStacks > 0) {
+      if (actor.messengerGrace > 0) {
+        // 这一层是在自己的回合里拿到的：本动结束不掉，下一动结束才掉
+        actor.messengerGrace -= 1;
+      } else {
+        actor.messengerStacks -= 1;
+        refreshActorSpeed(actor);
+        if (actor.messengerStacks === 0) actor.nextAt = currentAv + actor.period;
+      }
+    }
     event.pull = applyRolePull(actor, actors, currentAv, phase, eventPhaseNaturalIndex, event.actionType);
     event.detailExtra = event.pull ? `拉条 ${event.pull.targetName} ${event.pull.percent}%` : "";
     applyEventTransition(currentAv);
@@ -1809,6 +1930,10 @@ function renderUltimateEventControl(event) {
       <select data-ultimate-field="sourceSlotId" data-ultimate-id="${event.ultimateId}">
         ${sourceOptions}
       </select>
+      <label class="inline-flag" title="在上一行动角色的回合内释放：该角色不会被这次拉条影响，信使 buff 也会多留一回合">
+        <input type="checkbox" ${event.duringTurn ? "checked" : ""} data-ultimate-field="duringTurn" data-ultimate-id="${event.ultimateId}" />
+        <span>回合内</span>
+      </label>
       ${effects}
       <button class="inline-delete" type="button" title="删除" data-delete-ultimate="${event.ultimateId}">×</button>
     </span>
@@ -1816,6 +1941,32 @@ function renderUltimateEventControl(event) {
 }
 
 function renderExtraEventControl(event) {
+  if (event.automatic) {
+    if (event.pearlAuto) {
+      const options = state.slots
+        .map((slot, index) => {
+          const ally = getAlly(slot, index);
+          if (!ally || ally.characterId === pearlCharacterId) return "";
+          return `<option value="${slot.id}" ${slot.id === event.slotId ? "selected" : ""}>${escapeHtml(ally.name)}</option>`;
+        })
+        .join("");
+      return `
+        <span class="inline-effect extra">
+          <span>自动</span>
+          <select title="选择额外回合的角色（不能是真珠）" data-pearl-target>
+            ${options}
+          </select>
+          <span>${escapeHtml(event.detail)}</span>
+        </span>
+      `;
+    }
+    return `
+      <span class="inline-effect automatic">
+        <span>自动</span>
+        <span>${escapeHtml(event.detail)}</span>
+      </span>
+    `;
+  }
   const options = state.slots
     .map((slot, index) => {
       const ally = getAlly(slot, index);
@@ -1836,10 +1987,11 @@ function renderExtraEventControl(event) {
 
 function renderSupportEventControl(event) {
   if (event.automatic) {
+    const turnFlag = event.duringTurn && event.turnOwner ? " · 回合内" : "";
     return `
       <span class="inline-effect automatic">
         <span>自动</span>
-        <span>${escapeHtml(event.detail)}</span>
+        <span>${escapeHtml(event.detail + turnFlag)}</span>
       </span>
     `;
   }
@@ -1850,6 +2002,10 @@ function renderSupportEventControl(event) {
         <span>拉条</span>
         <input type="number" min="0" max="100" step="1" value="${formatNumber(normalizeSupportPercent(event.percent), 0)}" data-support-field="percent" data-support-id="${event.supportId}" />
         <span>%</span>
+      </label>
+      <label class="inline-flag" title="在上一行动角色的回合内触发：该角色不会被这次拉条影响">
+        <input type="checkbox" ${event.duringTurn ? "checked" : ""} data-support-field="duringTurn" data-support-id="${event.supportId}" />
+        <span>回合内</span>
       </label>
       <button class="inline-delete" type="button" title="删除" data-delete-support="${event.supportId}">×</button>
     </span>
@@ -1885,6 +2041,7 @@ function renderTimelineSub(event) {
       if (event.vonwacq) pieces.push("翁瓦克");
       if (event.tracePull) pieces.push(`行迹 ${event.tracePull}%`);
     }
+    if (event.messengerActive) pieces.push(`信使 +${Math.round(messengerSpeedBonus * 100)}%`);
     const effects = event.ultimateEffects?.length ? ` · ${event.ultimateEffects.join(" · ")}` : "";
     const actionTypeControl = state.showDetailedActions ? renderActionTypeControl(event) : "";
     return `${actionTypeControl}${pieces.map(escapeHtml).join(" · ")}${escapeHtml(effects)}${renderEventPullControl(event)}${renderActionAdjustmentControls(event)}`;
@@ -1895,7 +2052,7 @@ function renderTimelineSub(event) {
 function renderTimeline() {
   const timeline = buildTimeline();
   const wrap = document.querySelector("#timeline");
-  document.querySelector("#axisMeta").textContent = `${state.transition.enabled ? "每面 " : ""}上限 ${state.limit} AV，共 ${timeline.length} 项`;
+  document.querySelector("#axisMeta").textContent = `${state.transition.enabled ? "每面 " : ""}上限 ${state.limit} 行动值，共 ${timeline.length} 项`;
   document.querySelector("#showTimelineSpeed").checked = state.showTimelineSpeed;
   document.querySelector("#toggleDetailedActions")?.classList.toggle("active", state.showDetailedActions);
   wrap.classList.toggle("show-speed", state.showTimelineSpeed);
@@ -1926,7 +2083,7 @@ function renderTimelineColumns(wrap, timeline) {
       <section class="timeline-column ${phase > 1 ? "after-transition-column" : ""}">
         <div class="timeline-column-head">
           <strong>${phaseName(phase)}</strong>
-          <span>${lastEvent ? `至 ${formatNumber(lastEvent.av, 1)} AV` : "0 AV"}</span>
+          <span>${lastEvent ? `至 ${formatNumber(lastEvent.av, 1)} 行动值` : "0 行动值"}</span>
         </div>
         ${renderTimelineRows(events, {})}
       </section>
@@ -1957,7 +2114,7 @@ function renderTimelineRow(event, orderByPhase) {
       ? `draggable="true" data-drag-support-id="${event.supportId}"`
       : event.type === "ultimate"
         ? `draggable="true" data-drag-ultimate-id="${event.ultimateId}"`
-        : event.type === "extra"
+        : event.type === "extra" && event.extraId
           ? `draggable="true" data-drag-extra-id="${event.extraId}"`
           : "";
   const eventAttrs = event.eventKey ? `data-event-key="${escapeAttr(event.eventKey)}"` : "";
@@ -2334,6 +2491,7 @@ document.addEventListener("change", (event) => {
     if (!slot) return;
     const field = target.dataset.slotToggle;
     if (field === "windSet") slot.windSet = target.checked;
+    if (field === "messenger") slot.messenger = target.checked;
     if (field === "danceOnUltimate") {
       const character = getCharacter(slot.characterId);
       slot.danceOnUltimate = target.checked && isHarmonyCharacter(character);
@@ -2391,6 +2549,8 @@ document.addEventListener("change", (event) => {
     if (!support) return;
     if (target.dataset.supportField === "percent") {
       support.percent = normalizeSupportPercent(target.value);
+    } else if (target.dataset.supportField === "duringTurn") {
+      support.duringTurn = target.checked;
     } else {
       support.afterEvent = Math.max(0, Math.floor(numberOr(target.value, 0)));
     }
@@ -2404,6 +2564,15 @@ document.addEventListener("change", (event) => {
     if (target.dataset.ultimateField === "sourceSlotId") {
       ultimate.sourceSlotId = getValidUltimateSlotId(target.value);
     }
+    if (target.dataset.ultimateField === "duringTurn") {
+      ultimate.duringTurn = target.checked;
+    }
+    refreshComputed();
+    return;
+  }
+
+  if (target.matches("[data-pearl-target]")) {
+    state.pearlTargetSlotId = target.value;
     refreshComputed();
     return;
   }
@@ -2637,7 +2806,7 @@ document.addEventListener("drop", (event) => {
   const afterEvent = Math.max(0, Math.floor(numberOr(row?.dataset.dropIndex, 0)));
 
   if (payload.kind === "effect-new" && payload.type === "dance") {
-    state.supports.push({ id: makeId("support"), type: "dance", afterEvent, percent: 24 });
+    state.supports.push({ id: makeId("support"), type: "dance", afterEvent, percent: 24, duringTurn: false });
     renderAll();
     return;
   }
@@ -2645,7 +2814,8 @@ document.addEventListener("drop", (event) => {
   if (payload.kind === "effect-new" && payload.type === "ultimate") {
     const sourceSlotId = getValidUltimateSlotId("");
     if (!sourceSlotId) return;
-    state.ultimates.push({ id: makeId("ultimate"), afterEvent, sourceSlotId });
+    // 默认按“两个回合之间”释放：不占用上一行角色的回合
+    state.ultimates.push({ id: makeId("ultimate"), afterEvent, sourceSlotId, duringTurn: false });
     renderAll();
     return;
   }
