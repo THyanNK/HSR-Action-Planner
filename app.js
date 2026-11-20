@@ -54,6 +54,7 @@ let pickerReturnFocus = null;
 
 const state = loadState();
 let activePresetId = "";
+let configBaseline = "";
 let currentDragPayload = null;
 let tutorialReturnFocus = null;
 
@@ -498,6 +499,7 @@ function importPresets(importedPresets) {
   replaceState(normalized[0].config);
   document.querySelector("#configName").value = normalized[0].name;
   renderAll();
+  markConfigSaved();
   setConfigStatus(`已导入 ${normalized.length} 个配置`);
 }
 
@@ -2638,55 +2640,100 @@ document.querySelector("#addEnemy").addEventListener("click", () => {
   renderAll();
 });
 
+function snapshotConfig() {
+  return JSON.stringify(cloneConfig());
+}
+
+function isConfigDirty() {
+  return Boolean(configBaseline) && snapshotConfig() !== configBaseline;
+}
+
+function markConfigSaved() {
+  configBaseline = snapshotConfig();
+}
+
+function confirmDiscardUnsaved() {
+  if (!isConfigDirty()) return true;
+  return window.confirm("当前方案有未保存的修改，切换后会丢失。确定切换吗？");
+}
+
 document.querySelector("#saveConfig").addEventListener("click", () => {
   const nameInput = document.querySelector("#configName");
-  const name = nameInput.value.trim() || `方案 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
+  const rawName = nameInput.value.trim() || `方案 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
   const presets = loadPresets();
   const activePreset = presets.find((preset) => preset.id === activePresetId);
-  const existing = activePreset && activePreset.name === name ? activePreset : activePreset ? null : presets.find((preset) => preset.name === name);
+  const overwrite = Boolean(activePreset) && activePreset.name === rawName;
+  const name = overwrite
+    ? rawName
+    : uniquePresetName(rawName, presets.filter((preset) => preset.id !== activePreset?.id));
   const preset = {
-    id: existing?.id || makeId("preset"),
+    id: overwrite ? activePreset.id : makeId("preset"),
     name,
     savedAt: Date.now(),
     config: cloneConfig(),
   };
-  const nextPresets = existing ? presets.map((item) => (item.id === existing.id ? preset : item)) : [...presets, preset];
+  const nextPresets = overwrite
+    ? presets.map((item) => (item.id === activePreset.id ? preset : item))
+    : [...presets, preset];
   savePresets(nextPresets);
   activePresetId = preset.id;
   nameInput.value = name;
   renderConfigManager();
   document.querySelector("#configSelect").value = preset.id;
+  markConfigSaved();
+  setConfigStatus(
+    overwrite ? `已保存「${name}」` : activePreset ? `已另存为「${name}」` : `已保存新方案「${name}」`,
+  );
 });
 
 document.querySelector("#newConfig").addEventListener("click", () => {
   activePresetId = "";
   document.querySelector("#configName").value = "";
   renderConfigManager();
-});
-
-document.querySelector("#loadConfig").addEventListener("click", () => {
-  const presetId = document.querySelector("#configSelect").value;
-  const preset = loadPresets().find((item) => item.id === presetId);
-  if (!preset) return;
-  activePresetId = preset.id;
-  replaceState(preset.config);
-  document.querySelector("#configName").value = preset.name;
-  renderAll();
+  setConfigStatus("已新建空白方案，保存后会出现在下拉里");
 });
 
 document.querySelector("#deleteConfig").addEventListener("click", () => {
   const presetId = document.querySelector("#configSelect").value;
-  if (!presetId) return;
+  if (!presetId) {
+    setConfigStatus("先在下拉里选一个要删除的方案", true);
+    return;
+  }
+  const preset = loadPresets().find((item) => item.id === presetId);
+  if (!window.confirm(`删除方案「${preset?.name || ""}」？此操作不可撤销。`)) return;
   savePresets(loadPresets().filter((item) => item.id !== presetId));
   if (activePresetId === presetId) activePresetId = "";
   document.querySelector("#configName").value = "";
   renderConfigManager();
+  markConfigSaved();
+  setConfigStatus("已删除该方案");
 });
 
 document.querySelector("#configSelect").addEventListener("change", (event) => {
-  activePresetId = event.target.value;
-  const preset = loadPresets().find((item) => item.id === activePresetId);
-  document.querySelector("#configName").value = preset?.name || "";
+  const nextId = event.target.value;
+  if (nextId === activePresetId) return;
+  if (!confirmDiscardUnsaved()) {
+    event.target.value = activePresetId;
+    return;
+  }
+  if (!nextId) {
+    activePresetId = "";
+    document.querySelector("#configName").value = "";
+    renderConfigManager();
+    setConfigStatus("已新建空白方案");
+    return;
+  }
+  const preset = loadPresets().find((item) => item.id === nextId);
+  if (!preset) {
+    renderConfigManager();
+    return;
+  }
+  activePresetId = preset.id;
+  replaceState(preset.config);
+  document.querySelector("#configName").value = preset.name;
+  renderAll();
+  markConfigSaved();
+  setConfigStatus(`已加载「${preset.name}」`);
 });
 
 document.querySelector("#exportCurrentConfig").addEventListener("click", () => {
@@ -2870,6 +2917,7 @@ document.addEventListener("dragend", () => {
 
 applySharedConfigFromUrl();
 renderAll();
+configBaseline = snapshotConfig();
 initWorkspaceResizer();
 initSidebarToggle();
 initTutorialModal();
